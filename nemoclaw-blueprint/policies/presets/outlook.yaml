@@ -16,7 +16,9 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+            exfil_risk: "GET exposes email, calendar, and contact data via Microsoft Graph"
           - allow: { method: POST, path: "/**" }
+            exfil_risk: "POST can send email and create calendar events via Microsoft Graph"
       - host: login.microsoftonline.com
         port: 443
         protocol: rest
@@ -32,7 +34,9 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+            exfil_risk: "GET exposes email content from Outlook"
           - allow: { method: POST, path: "/**" }
+            exfil_risk: "POST can send email to any recipient via Outlook"
       - host: outlook.office.com
         port: 443
         protocol: rest
@@ -40,6 +44,8 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+            exfil_risk: "GET exposes email content from Outlook"
           - allow: { method: POST, path: "/**" }
+            exfil_risk: "POST can send email to any recipient via Outlook"
     binaries:
       - { path: /usr/local/bin/node }

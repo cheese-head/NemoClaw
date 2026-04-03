@@ -17,5 +17,6 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
+            exfil_risk: "POST can send messages to arbitrary Telegram chats and channels"
     binaries:
       - { path: /usr/local/bin/node }

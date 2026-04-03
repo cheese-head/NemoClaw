@@ -3,6 +3,7 @@
 
 preset:
   name: docker
+
   description: "Docker Hub and NVIDIA container registry access"
 
 network_policies:
@@ -17,6 +18,7 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+            exfil_risk: "POST can push container images containing arbitrary filesystem content to Docker Hub"
       - host: auth.docker.io
         port: 443
         protocol: rest
@@ -33,6 +35,7 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+            exfil_risk: "POST can push container images containing arbitrary filesystem content to NVIDIA Container Registry"
       - host: authn.nvidia.com
         port: 443
         protocol: rest

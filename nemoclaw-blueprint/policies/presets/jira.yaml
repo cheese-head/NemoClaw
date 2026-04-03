@@ -5,6 +5,7 @@ preset:
   name: jira
   description: "Jira and Atlassian Cloud access"
 
+
 network_policies:
   atlassian:
     name: atlassian
@@ -16,7 +17,9 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+            exfil_risk: "GET exposes all Jira issues, comments, and project data"
           - allow: { method: POST, path: "/**" }
+            exfil_risk: "POST can create or update Jira issues with arbitrary content"
       - host: auth.atlassian.com
         port: 443
         protocol: rest
@@ -32,6 +35,8 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+            exfil_risk: "GET exposes all Atlassian API data including Jira and Confluence resources"
           - allow: { method: POST, path: "/**" }
+            exfil_risk: "POST can write to any Atlassian API endpoint with arbitrary content"
     binaries:
       - { path: /usr/local/bin/node }
