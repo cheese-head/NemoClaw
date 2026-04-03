@@ -7,35 +7,16 @@
 //
 //   1. Load a preset YAML file from the presets library for each selected tool.
 //   2. Filter endpoints and rules by the user's chosen access level (read / write).
-//   3. Apply tier-based path transforms (T1 narrow, T2 as-is, T3 widen).
-//   4. Merge all per-tool network_policies sections into a single output document.
-//   5. Serialize back to YAML with the standard NemoClaw header.
+//   3. Merge all per-tool network_policies sections into a single output document.
+//   4. Serialize back to YAML with the standard NemoClaw header.
 //
 // No inference endpoint required. No network calls. Fully offline.
-//
-// Tier transform rules
-// --------------------
-//   T1 Enterprise  — read: GET with specific paths only (reject /**)
-//                    write: GET + POST with specific paths only (reject /**)
-//                    tunnels (access: full): stripped entirely
-//
-//   T2 Professional — read: GET rules from preset as-is
-//                     write: all rules from preset as-is
-//                     tunnels: kept as-is
-//
-//   T3 Hobbyist     — read: collapsed to [ GET /** ]
-//                     write: collapsed to [ GET /**, POST /**, PUT /**, PATCH /**, DELETE /** ]
-//                     tunnels: kept as-is
 //
 // Coverage gaps
 // -------------
 // Tools that do not yet have a preset file will be listed in the returned
 // `missing` array. The caller should warn the user and skip those tools.
 // Add a new <toolId>.yaml in nemoclaw-blueprint/policies/presets/ to fill a gap.
-//
-// Missing presets as of 2026-04-02:
-//   github, gitlab, linear, notion, datadog, pagerduty, grafana,
-//   websearch, stripe, openai, sendgrid, teams, email, calendar
 
 "use strict";
 
@@ -51,9 +32,6 @@ const PRESETS_DIR = path.resolve(__dirname, "../../nemoclaw-blueprint/policies/p
 
 /** HTTP methods that constitute "write" access. */
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-
-/** All common REST methods used when T3 widens to /**. */
-const ALL_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 // ---------------------------------------------------------------------------
 // Preset loading
@@ -91,16 +69,6 @@ function isWriteRule(rule) {
 }
 
 /**
- * Return true if an allow-rule's path is a wildcard (/** or /*).
- * These are considered too broad for T1 Enterprise tier.
- * @param {{ allow: { path: string } }} rule
- */
-function isWildcardPath(rule) {
-  const p = rule.allow?.path || "";
-  return p === "/**" || p === "/*" || p.endsWith("/**");
-}
-
-/**
  * Filter an endpoint's rules by access level.
  *   access "read"  → keep only GET rules
  *   access "write" → keep all rules
@@ -115,61 +83,22 @@ function filterByAccess(rules, access) {
   return rules; // write: keep all
 }
 
-/**
- * Apply tier-based path transforms to a filtered rule set.
- *
- *   T1 — strip wildcard paths (/** / /*); keep specific named paths only.
- *         If this empties the rule list, return the originals with a RISK_FLAG
- *         comment so the operator can decide manually.
- *   T2 — no transform; rules stay as-is.
- *   T3 — collapse to one rule per unique method, all using /** path.
- *
- * @param {object[]} rules
- * @param {"t1"|"t2"|"t3"} tier
- * @param {"read"|"write"} access  used when T3 expands the method set
- * @returns {object[]}
- */
-function applyTierPaths(rules, tier, access) {
-  if (!rules || rules.length === 0) return rules;
-
-  if (tier === "t2") return rules;
-
-  if (tier === "t1") {
-    const narrow = rules.filter(r => !isWildcardPath(r));
-    // If every rule was a wildcard (e.g. slack.yaml uses GET /**), fall back to
-    // the originals rather than producing an empty policy.  Callers receive a
-    // risk flag in the output YAML so the operator is aware.
-    return narrow.length > 0 ? narrow : rules;
-  }
-
-  if (tier === "t3") {
-    // Collect the methods that were already allowed, then widen all paths to /*.
-    const methods = new Set(rules.map(r => (r.allow?.method || "").toUpperCase()).filter(Boolean));
-    // For write access, ensure write methods are present even if the preset omits them.
-    if (access === "write") ALL_METHODS.forEach(m => methods.add(m));
-    return [...methods].map(m => ({ allow: { method: m, path: "/**" } }));
-  }
-
-  return rules;
-}
-
 // ---------------------------------------------------------------------------
 // Endpoint-level filtering
 // ---------------------------------------------------------------------------
 
 /**
- * Filter and transform the endpoint list for a single policy block.
+ * Filter the endpoint list for a single policy block.
  *
- * - Tunnel endpoints (`access: full`) are stripped for T1 or read access.
- * - REST endpoints have their rules filtered by access then transformed by tier.
+ * - Tunnel endpoints (`access: full`) are stripped for read access, kept for write.
+ * - REST endpoints have their rules filtered by access level.
  * - Endpoints that end up with zero rules are dropped.
  *
  * @param {object[]} endpoints
  * @param {"read"|"write"} access
- * @param {"t1"|"t2"|"t3"} tier
  * @returns {object[]}
  */
-function filterEndpoints(endpoints, access, tier) {
+function filterEndpoints(endpoints, access) {
   if (!endpoints) return [];
 
   const result = [];
@@ -177,17 +106,16 @@ function filterEndpoints(endpoints, access, tier) {
   for (const ep of endpoints) {
     // Tunnel endpoint (WebSocket CONNECT, etc.)
     if (ep.access === "full") {
-      if (tier === "t1" || access === "read") continue; // strip
-      result.push(ep);                                   // T2/T3 write: keep
+      if (access === "read") continue; // strip tunnels for read-only
+      result.push(ep);
       continue;
     }
 
     // REST endpoint
-    const accessFiltered = filterByAccess(ep.rules, access);
-    if (accessFiltered.length === 0) continue; // nothing left after access filter
+    const filtered = filterByAccess(ep.rules, access);
+    if (filtered.length === 0) continue;
 
-    const tierFiltered = applyTierPaths(accessFiltered, tier, access);
-    result.push({ ...ep, rules: tierFiltered });
+    result.push({ ...ep, rules: filtered });
   }
 
   return result;
@@ -201,14 +129,13 @@ function filterEndpoints(endpoints, access, tier) {
  * Compose a merged network_policies object from a list of tool selections.
  *
  * @param {Array<{ tool: object, level: "read"|"write" }>} toolSelections
- * @param {"t1"|"t2"|"t3"} tier
  * @param {string} [presetsDir]  override for testing
  * @returns {{ policies: object, missing: string[], warnings: string[] }}
  *   policies — merged network_policies ready to embed in the output YAML
  *   missing  — tool IDs for which no preset file was found
  *   warnings — human-readable risk warnings generated during composition
  */
-function composePresets(toolSelections, tier, presetsDir = PRESETS_DIR) {
+function composePresets(toolSelections, presetsDir = PRESETS_DIR) {
   const policies  = {};
   const missing   = [];
   const warnings  = [];
@@ -224,23 +151,10 @@ function composePresets(toolSelections, tier, presetsDir = PRESETS_DIR) {
     const networkPolicies = preset.network_policies || {};
 
     for (const [blockName, block] of Object.entries(networkPolicies)) {
-      const filtered = filterEndpoints(block.endpoints, level, tier);
+      const filtered = filterEndpoints(block.endpoints, level);
       if (filtered.length === 0) {
-        warnings.push(`${tool.id}: all endpoints removed after access/tier filter — skipped`);
+        warnings.push(`${tool.id}: all endpoints removed after access filter — skipped`);
         continue;
-      }
-
-      // Check for wildcard paths surviving T1 (fallback case in applyTierPaths).
-      if (tier === "t1") {
-        const hasWildcard = filtered.some(ep =>
-          (ep.rules || []).some(r => isWildcardPath(r)),
-        );
-        if (hasWildcard) {
-          warnings.push(
-            `${tool.id}: T1 tier but preset only defines wildcard paths (/**). ` +
-            `Consider adding specific paths to ${tool.id}.yaml.`,
-          );
-        }
       }
 
       // When multiple tools are merged, prefix the block name with the tool ID
@@ -268,18 +182,14 @@ function composePresets(toolSelections, tier, presetsDir = PRESETS_DIR) {
  * @param {string}  presetName   slug used as the file name and preset.name
  * @param {object}  policies     merged network_policies object
  * @param {{ readOnly: string[], readWrite: string[] }} fsAccess  extra FS paths
- * @param {"t1"|"t2"|"t3"} tier
  * @returns {string}
  */
-function buildPresetYaml(presetName, policies, fsAccess, tier) {
-  const enforcement = tier === "t3" ? "audit"            : "enforce";
-  const landlock    = tier === "t1" ? "hard_requirement" : "best_effort";
-
-  // Re-stamp enforcement + tls on each REST endpoint so they match tier.
+function buildPresetYaml(presetName, policies, fsAccess) {
+  // Re-stamp enforcement + tls on each REST endpoint.
   for (const block of Object.values(policies)) {
     for (const ep of block.endpoints || []) {
       if (ep.access === "full") continue; // tunnel — leave alone
-      ep.enforcement = enforcement;
+      ep.enforcement = "enforce";
       ep.tls         = ep.tls ?? "terminate";
     }
   }
@@ -293,7 +203,7 @@ function buildPresetYaml(presetName, policies, fsAccess, tier) {
       read_write: ["/sandbox", "/tmp", "/dev/null",   ...(fsAccess.readWrite || [])],
     },
 
-    landlock: { compatibility: landlock },
+    landlock: { compatibility: "best_effort" },
 
     process: {
       run_as_user:  "sandbox",
@@ -326,7 +236,6 @@ function buildPresetYaml(presetName, policies, fsAccess, tier) {
 module.exports = {
   loadPreset,
   filterByAccess,
-  applyTierPaths,
   filterEndpoints,
   composePresets,
   buildPresetYaml,

@@ -3,15 +3,11 @@
 //
 // policy-wizard-static.js — Static policy wizard for NemoClaw.  No LLM required.
 //
-// The same guided Q1–Q4 TUI as the original policy-wizard, but policy
-// generation is replaced with deterministic preset composition:
+// Guided TUI for policy composition without an LLM:
 //
-//   Q1  What are you building?      (use-case selector)
-//   Q2  Which tools does it need?   (tool checklist with live risk bar)
-//   Q3  Access level per tool       (read / write toggle grid)
-//   Q4  Extra filesystem paths      (checklist + custom entry)
-//   Q5  Profile card + tier select  (T1 / T2 / T3 — no LLM, instant)
-//   Q6  Confirm → compose → review → name → save
+//   Q1  Select presets              (checklist — browse all preset files)
+//   Q2  Access level per preset     (read / write toggle grid)
+//   Compose → exfil warning → review → name → save
 //
 // Missing presets: the wizard warns and skips tools with no preset file.
 //   → Add <toolId>.yaml to nemoclaw-blueprint/policies/presets/ to fill gaps.
@@ -114,74 +110,6 @@ const USE_CASES = [
     tools: [],
   },
 ];
-
-// ---------------------------------------------------------------------------
-// Profile tiers  (T1 / T2 / T3)
-// ---------------------------------------------------------------------------
-
-const PROFILES = {
-  t1: {
-    tier: "T1",
-    id:   "t1",
-    name: "Enterprise",
-    tagline: "Safest default — read-only, minimal external access",
-    personas: ["IT admin", "Finance / Legal / Health operator", "Compliance engineer"],
-    scoreMax: 4,
-  },
-  t2: {
-    tier: "T2",
-    id:   "t2",
-    name: "Professional",
-    tagline: "Balanced productivity — bounded read+write to approved tools",
-    personas: ["Software engineer", "Data scientist", "Team lead"],
-    scoreMax: 9,
-  },
-  t3: {
-    tier: "T3",
-    id:   "t3",
-    name: "Hobbyist",
-    tagline: "High-trust mode — broad capabilities, monitoring required",
-    personas: ["Open source contributor", "Home lab enthusiast", "Solo developer"],
-    scoreMax: Infinity,
-  },
-};
-
-const PROFILE_LIST = [PROFILES.t1, PROFILES.t2, PROFILES.t3];
-
-// ---------------------------------------------------------------------------
-// Risk helpers
-// ---------------------------------------------------------------------------
-
-function computeScore(toolIds, access) {
-  return toolIds.reduce((sum, id) => {
-    const t = TOOLS[id];
-    if (!t) return sum;
-    return sum + (t.risk[access[id] || "read"] || 0);
-  }, 0);
-}
-
-function recommendProfile(score) {
-  if (score <= PROFILES.t1.scoreMax) return PROFILES.t1;
-  if (score <= PROFILES.t2.scoreMax) return PROFILES.t2;
-  return PROFILES.t3;
-}
-
-function profileColor(profile) {
-  if (profile.tier === "T1") return C.green;
-  if (profile.tier === "T2") return C.yellow;
-  return C.red;
-}
-
-function buildRiskBar(score) {
-  const MAX = 15;
-  const BAR = 20;
-  const filled = Math.min(Math.round((score / MAX) * BAR), BAR);
-  const bar = "▰".repeat(filled) + "▱".repeat(BAR - filled);
-  const profile = recommendProfile(score);
-  const col = profileColor(profile);
-  const label = score <= 4 ? "low" : score <= 9 ? "medium" : "high";
-  return `  Risk  ${col}${bar}${C.reset}  ${col}${label}${C.reset}  ${C.dim}→ ${profile.name} (${profile.tier})${C.reset}`;
-}
 
 // ---------------------------------------------------------------------------
 // Raw-mode TUI helpers
@@ -360,9 +288,7 @@ function promptChecklist(title, items, preSelected = []) {
           );
         }
       }
-      const score = [...selected].reduce((s, i) => s + (items[i]?.risk?.read || 0), 0);
       n = writeLine("", n);
-      n = writeLine(buildRiskBar(score), n);
       const selHint = selected.size === 0 ? " · select at least one" : ` · ${selected.size} selected`;
       const hint = filter
         ? `  ${C.dim}Filter:${C.reset} ${filter}${C.dim}▌  Esc clear${selHint}${C.reset}`
@@ -604,128 +530,6 @@ async function promptFilesystemPaths() {
 }
 
 // ---------------------------------------------------------------------------
-// Profile card display
-// ---------------------------------------------------------------------------
-
-function renderProfileCard(profile, score, toolSelections) {
-  const col = profileColor(profile);
-  process.stdout.write(`  ${C.bold}Profile recommendation${C.reset}\n\n`);
-  process.stdout.write(`  ${col}${C.bold}${profile.tier} ${profile.name}${C.reset}  ${C.dim}score ${score}/15${C.reset}\n`);
-  process.stdout.write(`  ${C.dim}${profile.tagline}${C.reset}\n`);
-  process.stdout.write(`  ${C.dim}Typical for: ${profile.personas.join(", ")}${C.reset}\n\n`);
-  for (const { tool, level } of toolSelections) {
-    const riskVal = tool.risk[level] || 0;
-    const col2 = riskVal <= 1 ? C.green : riskVal <= 2 ? C.yellow : C.red;
-    const hasPreset = fs.existsSync(path.join(PRESETS_DIR, `${tool.id}.yaml`));
-    const badge = hasPreset ? "" : ` ${C.yellow}(no preset — will be skipped)${C.reset}`;
-    process.stdout.write(`    ${col2}●${C.reset}  ${tool.name.padEnd(20)} ${C.dim}${level}${C.reset}${badge}\n`);
-  }
-  process.stdout.write("\n");
-}
-
-// ---------------------------------------------------------------------------
-// Tier selector  (← → tabs · Enter confirm)
-// ---------------------------------------------------------------------------
-
-function promptTierSelect(recommended) {
-  return new Promise((resolve) => {
-    const profiles = PROFILE_LIST;
-    let cursor = profiles.findIndex((p) => p.id === recommended.id);
-    if (cursor < 0) cursor = 1; // default to T2
-    let lineCount = 0;
-
-    function render() {
-      let n = 0;
-      n = writeLine(`  ${C.bold}Select profile tier${C.reset}`, n);
-      n = writeLine("", n);
-      for (let i = 0; i < profiles.length; i++) {
-        const p = profiles[i];
-        const col = profileColor(p);
-        if (i === cursor) {
-          n = writeLine(`  ${col}${C.bold}▶ ${p.tier} ${p.name.padEnd(14)}${C.reset}  ${p.tagline}`, n);
-        } else {
-          n = writeLine(`    ${C.dim}${p.tier} ${p.name.padEnd(14)}  ${p.tagline}${C.reset}`, n);
-        }
-      }
-      n = writeLine("", n);
-      n = writeLine(`  ${C.dim}↑↓ or ←→ cycle · Enter confirm${C.reset}  ${C.dim}recommended: ${recommended.tier}${C.reset}`, n);
-      lineCount = n;
-    }
-
-    render();
-
-    const handler = (key) => {
-      if (key === "\x1b[A" || key === "\x1b[D") {
-        cursor = (cursor - 1 + profiles.length) % profiles.length; redraw();
-      } else if (key === "\x1b[B" || key === "\x1b[C") {
-        cursor = (cursor + 1) % profiles.length; redraw();
-      } else if (key === "\r" || key === "\n") {
-        rawCleanup(handler); process.stdout.write("\n"); resolve(profiles[cursor]);
-      } else if (key === "\u0003") {
-        rawCleanup(handler);
-        process.stderr.write(`\n  ${C.dim}Goodbye.${C.reset}\n\n`);
-        process.exit(0);
-      }
-    };
-
-    rawInput(handler);
-    function redraw() { process.stdout.write(`\x1b[${lineCount}A\x1b[0J`); render(); }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Review display
-// ---------------------------------------------------------------------------
-
-function renderReview(policies, missing, warnings, toolSelections, tier) {
-  const col = profileColor(PROFILES[tier]);
-  process.stdout.write(`\n  ${C.bold}Policy review${C.reset}  ${col}${tier.toUpperCase()} tier${C.reset}\n\n`);
-
-  // What's open
-  const allEndpoints = Object.values(policies).flatMap((b) => b.endpoints || []);
-  if (allEndpoints.length === 0) {
-    process.stdout.write(`  ${C.yellow}No endpoints composed — all selected tools may be missing presets.${C.reset}\n`);
-  } else {
-    process.stdout.write(`  ${C.bold}WHAT IS OPENED${C.reset}\n`);
-    for (const ep of allEndpoints) {
-      if (ep.access === "full") {
-        process.stdout.write(`    ${C.dim}${ep.host}:${ep.port}${C.reset}  tunnel (CONNECT)\n`);
-        continue;
-      }
-      const methods = [...new Set((ep.rules || []).map((r) => r.allow?.method).filter(Boolean))];
-      process.stdout.write(`    ${C.dim}${ep.host}:${ep.port}${C.reset}  ${methods.join(" ")}\n`);
-    }
-    process.stdout.write("\n");
-  }
-
-  // What's blocked (static summary)
-  process.stdout.write(`  ${C.bold}WHAT REMAINS BLOCKED${C.reset}\n`);
-  process.stdout.write(`  ${C.dim}  All hosts not listed above${C.reset}\n`);
-  process.stdout.write(`  ${C.dim}  All RFC1918 / loopback / link-local / CGNAT addresses${C.reset}\n`);
-  process.stdout.write(`  ${C.dim}  All binaries not explicitly listed in policies${C.reset}\n`);
-  process.stdout.write("\n");
-
-  // Missing presets
-  if (missing.length > 0) {
-    process.stdout.write(`  ${C.yellow}MISSING PRESETS — these tools were skipped:${C.reset}\n`);
-    for (const id of missing) {
-      const tool = TOOLS[id];
-      process.stdout.write(`  ${C.yellow}  ✗ ${(tool?.name || id).padEnd(20)}${C.reset}  add ${id}.yaml to nemoclaw-blueprint/policies/presets/\n`);
-    }
-    process.stdout.write("\n");
-  }
-
-  // Warnings
-  if (warnings.length > 0) {
-    process.stdout.write(`  ${C.yellow}WARNINGS${C.reset}\n`);
-    for (const w of warnings) {
-      process.stdout.write(`  ${C.yellow}  ⚠ ${w}${C.reset}\n`);
-    }
-    process.stdout.write("\n");
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Save helper
 // ---------------------------------------------------------------------------
 
@@ -877,7 +681,7 @@ function mergePresets(selections) {
   for (const { preset, level } of selections) {
     const networkPolicies = preset.doc?.network_policies || {};
     for (const [blockName, block] of Object.entries(networkPolicies)) {
-      const filtered = filterEndpoints(block.endpoints, level, "t2");
+      const filtered = filterEndpoints(block.endpoints, level);
       if (filtered.length === 0) continue;
       const key = multi ? `${preset.name}-${blockName}` : blockName;
       policies[key] = {
@@ -1002,41 +806,13 @@ async function run() {
     rl.question(`  Save as [${defaultName}]: `, (ans) => { rl.close(); resolve(ans.trim()); });
   });
   const outName = (nameAnswer || defaultName).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 63) || defaultName;
-  const content  = buildPresetYaml(outName, policies, { readOnly: [], readWrite: [] }, "t2");
+  const content  = buildPresetYaml(outName, policies, { readOnly: [], readWrite: [] });
   const outPath  = path.join(CUSTOM_DIR, `${outName}.yaml`);
   fs.writeFileSync(outPath, content, "utf-8");
 
   process.stdout.write(`  ${C.green}✓${C.reset}  Saved to ${outPath}\n\n`);
   process.stdout.write(`  To apply to a sandbox:\n`);
   process.stdout.write(`    ${C.bold}nemoclaw policy apply <sandbox-name> --preset-file ${outPath}${C.reset}\n\n`);
-}
-
-// ---------------------------------------------------------------------------
-// Guided sub-flow (Q1 → Q2 → Q3)
-// ---------------------------------------------------------------------------
-
-async function runGuided() {
-  const ucResult = await promptArrowSelect(
-    "Q1  What are you building?",
-    USE_CASES.map((uc) => ({ name: uc.name, desc: uc.desc })),
-  );
-  const useCase =
-    typeof ucResult === "object" && ucResult?._freeText
-      ? { id: "custom", name: ucResult._freeText, desc: ucResult._freeText, tools: [] }
-      : USE_CASES[ucResult ?? 0];
-
-  const allTools = Object.values(TOOLS);
-  const selectedTools = await promptChecklist(
-    "Q2  Which tools does your agent need?",
-    allTools,
-    useCase.tools,
-  );
-  process.stdout.write(`  ${C.dim}→ ${selectedTools.map((t) => t.name).join(", ")}${C.reset}\n\n`);
-
-  const accessMap = await promptAccessLevels(selectedTools);
-  const toolSelections = selectedTools.map((t) => ({ tool: t, level: accessMap[t.id] }));
-
-  return { useCase, toolSelections };
 }
 
 // ---------------------------------------------------------------------------
@@ -1067,7 +843,7 @@ async function selectAndMerge() {
   renderMergedReview(policies);
 
   const name = selections.map(({ preset, level }) => `${preset.name}-${level[0]}`).join("--");
-  return buildPresetYaml(name, policies, { readOnly: [], readWrite: [] }, "t2");
+  return buildPresetYaml(name, policies, { readOnly: [], readWrite: [] });
 }
 
 module.exports = { run, selectAndMerge };
