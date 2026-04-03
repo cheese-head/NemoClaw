@@ -3164,6 +3164,99 @@ function arePolicyPresetsApplied(sandboxName, selectedPresets = []) {
   return selectedPresets.every((preset) => applied.has(preset));
 }
 
+/**
+ * Raw-mode TUI preset selector.
+ * Keys: ↑/↓ or k/j to move, Space to toggle, a to select/unselect all, Enter to confirm.
+ * Falls back to a simple line-based prompt when stdin is not a TTY.
+ */
+async function presetsCheckboxSelector(allPresets, initialSelected) {
+  const selected = new Set(initialSelected);
+  const n = allPresets.length;
+
+  // ── Fallback: non-TTY (piped input) ──────────────────────────────
+  if (!process.stdin.isTTY) {
+    console.log("");
+    console.log("  Available policy presets:");
+    allPresets.forEach((p, i) => {
+      const marker = selected.has(p.name) ? "[\x1b[32m✓\x1b[0m]" : "[ ]";
+      console.log(`    ${marker} ${p.name.padEnd(14)} — ${p.description}`);
+    });
+    console.log("");
+    const raw = await prompt("  Select presets (comma-separated names, Enter to skip): ");
+    if (!raw.trim()) return [];
+    return raw.split(",").map((s) => s.trim()).filter((name) => allPresets.some((p) => p.name === name));
+  }
+
+  // ── Raw-mode TUI ─────────────────────────────────────────────────
+  let cursor = 0;
+
+  const HINT = "  ↑/↓ j/k  move    Space  toggle    a  all/none    Enter  confirm";
+
+  const renderLines = () => {
+    const lines = ["  Available policy presets:"];
+    allPresets.forEach((p, i) => {
+      const check = selected.has(p.name) ? "[\x1b[32m✓\x1b[0m]" : "[ ]";
+      const arrow = i === cursor ? ">" : " ";
+      lines.push(`   ${arrow} ${check} ${p.name.padEnd(14)} — ${p.description}`);
+    });
+    lines.push("");
+    lines.push(HINT);
+    return lines;
+  };
+
+  // Initial paint
+  process.stdout.write("\n");
+  const initial = renderLines();
+  for (const line of initial) process.stdout.write(`${line}\n`);
+  let lineCount = initial.length;
+
+  const redraw = () => {
+    process.stdout.write(`\x1b[${lineCount}A`);
+    const lines = renderLines();
+    for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
+    lineCount = lines.length;
+  };
+
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding("utf8");
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.removeAllListeners("data");
+    };
+
+    process.stdin.on("data", (key) => {
+      if (key === "\r" || key === "\n") {
+        cleanup();
+        process.stdout.write("\n");
+        resolve([...selected]);
+      } else if (key === "\x03") {
+        // Ctrl+C
+        cleanup();
+        process.exit(1);
+      } else if (key === "\x1b[A" || key === "k") {
+        cursor = (cursor - 1 + n) % n;
+        redraw();
+      } else if (key === "\x1b[B" || key === "j") {
+        cursor = (cursor + 1) % n;
+        redraw();
+      } else if (key === " ") {
+        const name = allPresets[cursor].name;
+        if (selected.has(name)) selected.delete(name);
+        else selected.add(name);
+        redraw();
+      } else if (key === "a") {
+        if (selected.size === n) selected.clear();
+        else for (const p of allPresets) selected.add(p.name);
+        redraw();
+      }
+    });
+  });
+}
+
 // eslint-disable-next-line complexity
 async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
@@ -3171,13 +3264,9 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 
   step(7, 7, "Policy presets");
 
-  const suggestions = ["pypi", "npm"];
-  if (getCredential("TELEGRAM_BOT_TOKEN")) suggestions.push("telegram");
-  if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
-  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN)
-    suggestions.push("discord");
-
-  const allPresets = policies.listPresets();
+  // Use t2 preset YAMLs as the baseline for all users
+  const selectedTier = "t2";
+  const allPresets = policies.listTierPresets(selectedTier);
   const applied = policies.getAppliedPresets(sandboxName);
   let chosen = selectedPresets;
 
@@ -3190,34 +3279,22 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     note(`  [resume] Reapplying policy presets: ${chosen.join(", ")}`);
     for (const name of chosen) {
       if (applied.includes(name)) continue;
-      policies.applyPreset(sandboxName, name);
+      policies.applyPreset(sandboxName, name, selectedTier);
     }
     return chosen;
   }
 
   if (isNonInteractive()) {
-    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
-    chosen = suggestions;
+    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "custom").trim().toLowerCase();
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
       note("  [non-interactive] Skipping policy presets.");
       return [];
     }
 
-    if (policyMode === "custom" || policyMode === "list") {
-      chosen = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
-      if (chosen.length === 0) {
-        console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
-        process.exit(1);
-      }
-    } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
-      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
-      if (envPresets.length > 0) {
-        chosen = envPresets;
-      }
-    } else {
-      console.error(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
-      console.error("  Valid values: suggested, custom, skip");
+    chosen = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
+    if ((policyMode === "custom" || policyMode === "list") && chosen.length === 0) {
+      console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
       process.exit(1);
     }
 
@@ -3256,46 +3333,9 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     return chosen;
   }
 
-  console.log("");
-  console.log("  Available policy presets:");
-  allPresets.forEach((p) => {
-    const marker = applied.includes(p.name) ? "●" : "○";
-    const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
-    console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
-  });
-  console.log("");
-
-  const answer = await prompt(
-    `  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `,
-  );
-
-  if (answer.toLowerCase() === "n") {
-    console.log("  Skipping policy presets.");
-    return [];
-  }
-
-  let interactiveChoice = suggestions;
-  if (answer.toLowerCase() === "list") {
-    const custom = await prompt("  Enter preset names (comma-separated): ");
-    interactiveChoice = parsePolicyPresetEnv(custom);
-  }
-
-  const knownPresets = new Set(allPresets.map((p) => p.name));
-  let invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
-  while (invalidPresets.length > 0) {
-    console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
-    console.log("  Available presets:");
-    for (const p of allPresets) {
-      console.log(`    - ${p.name}`);
-    }
-    const retry = await prompt("  Enter preset names (comma-separated), or leave empty to skip: ");
-    if (!retry.trim()) {
-      console.log("  Skipping policy presets.");
-      return [];
-    }
-    interactiveChoice = parsePolicyPresetEnv(retry);
-    invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
-  }
+  // Interactive: raw-mode TUI checkbox selector
+  const initialSelected = applied.filter((name) => allPresets.some((p) => p.name === name));
+  const interactiveChoice = await presetsCheckboxSelector(allPresets, initialSelected);
 
   if (onSelection) onSelection(interactiveChoice);
   if (!waitForSandboxReady(sandboxName)) {
