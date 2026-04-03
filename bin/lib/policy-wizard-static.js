@@ -543,12 +543,18 @@ async function warnExfil(policies) {
   process.stdout.write(`\n  ${C.yellow}${C.bold}⚠  EXFILTRATION RISK${C.reset}\n`);
   process.stdout.write(`  ${C.dim}The following rules can move data outside the sandbox:${C.reset}\n\n`);
   let lastPolicy = null;
-  for (const { policyName, method, path, risk } of risks) {
+  let lastHost = null;
+  for (const { policyName, host, method, path, risk } of risks) {
     if (policyName !== lastPolicy) {
       process.stdout.write(`    ${C.yellow}●${C.reset}  ${C.bold}${policyName}${C.reset}\n`);
       lastPolicy = policyName;
+      lastHost = null;
     }
-    process.stdout.write(`       ${C.dim}${method} ${path}${C.reset} — ${risk}\n`);
+    if (host !== lastHost) {
+      process.stdout.write(`       ${C.cyan}${host}${C.reset}\n`);
+      lastHost = host;
+    }
+    process.stdout.write(`         ${C.dim}${method} ${path}${C.reset} — ${risk}\n`);
   }
 
   process.stdout.write("\n");

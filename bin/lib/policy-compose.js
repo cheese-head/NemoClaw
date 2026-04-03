@@ -33,6 +33,18 @@ const PRESETS_DIR = path.resolve(__dirname, "../../nemoclaw-blueprint/policies/p
 /** HTTP methods that constitute "write" access. */
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+/**
+ * NemoClaw-only annotation fields that are meaningful to this tooling but are
+ * not valid OpenShell policy fields.  At serialisation time these are converted
+ * to inline YAML comments so the information is preserved in the file without
+ * causing OpenShell to reject the policy.
+ *
+ * Add new annotation field names here as the schema evolves.
+ */
+const ANNOTATION_FIELDS = [
+  "exfil_risk",
+];
+
 // ---------------------------------------------------------------------------
 // Preset loading
 // ---------------------------------------------------------------------------
@@ -240,7 +252,15 @@ function buildPresetYaml(presetName, policies, fsAccess) {
     "",
   ].join("\n");
 
-  return header + yaml.stringify(doc, { indent: 2, lineWidth: 0 });
+  const raw = yaml.stringify(doc, { indent: 2, lineWidth: 0 });
+  // Convert all NemoClaw annotation fields to inline YAML comments so they
+  // survive in the generated file but are invisible to OpenShell's parser.
+  const annotationRe = new RegExp(
+    `^(\\s+)(${ANNOTATION_FIELDS.join("|")}): (.*)$`,
+    "gm",
+  );
+  const annotated = raw.replace(annotationRe, "$1# $2: $3");
+  return header + annotated;
 }
 
 // ---------------------------------------------------------------------------
