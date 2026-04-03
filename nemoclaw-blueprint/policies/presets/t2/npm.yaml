@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: npm
+  description: "npm registry access scoped to the openclaw package (install only)"
+
+network_policies:
+  npm_openclaw:
+    name: npm_openclaw
+    endpoints:
+      - host: registry.npmjs.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/openclaw*" }
+          - allow: { method: GET, path: "/@openclaw*" }
+          - allow: { method: GET, path: "/-/ping" }
+          - allow: { method: POST, path: "/-/npm/v1/security/**" }
+    binaries:
+      - { path: /usr/local/bin/npm* }
+      - { path: /usr/local/bin/npx* }
+      - { path: /usr/local/bin/node* }
+      - { path: /usr/bin/npm* }
+      - { path: /usr/bin/node* }

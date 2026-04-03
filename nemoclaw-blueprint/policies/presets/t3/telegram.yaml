@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: telegram
+  description: "Telegram Bot API full access (send, receive, edit, delete messages and files)"
+
+network_policies:
+  telegram_bot:
+    name: telegram_bot
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/node }

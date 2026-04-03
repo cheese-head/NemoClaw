@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: npm
+  description: "npm registry read-only access (install only, no publish)"
+
+network_policies:
+  npm_readonly:
+    name: npm_readonly
+    endpoints:
+      - host: registry.npmjs.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: registry.yarnpkg.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/npm* }
+      - { path: /usr/local/bin/npx* }
+      - { path: /usr/local/bin/node* }
+      - { path: /usr/bin/npm* }
+      - { path: /usr/bin/node* }

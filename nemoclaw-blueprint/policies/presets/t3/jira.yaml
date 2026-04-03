@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: jira
+  description: "Jira and Atlassian Cloud full access (create, edit, comment, and delete tickets)"
+
+network_policies:
+  atlassian:
+    name: atlassian
+    endpoints:
+      - host: "*.atlassian.net"
+        port: 443
+        access: full
+      - host: auth.atlassian.com
+        port: 443
+        access: full
+      - host: api.atlassian.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/node }

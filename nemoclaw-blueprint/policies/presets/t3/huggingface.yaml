@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: huggingface
+  description: "Hugging Face Hub, LFS, and Inference API full access (browse, download, upload, and inference)"
+
+network_policies:
+  huggingface:
+    name: huggingface
+    endpoints:
+      - host: huggingface.co
+        port: 443
+        access: full
+      - host: cdn-lfs.huggingface.co
+        port: 443
+        access: full
+      - host: api-inference.huggingface.co
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/python3 }
+      - { path: /usr/local/bin/node }

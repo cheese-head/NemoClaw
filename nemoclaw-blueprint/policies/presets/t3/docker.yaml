@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: docker
+  description: "Docker Hub and NVIDIA container registry full access (pull and push)"
+
+network_policies:
+  docker_registries:
+    name: docker_registries
+    endpoints:
+      - host: registry-1.docker.io
+        port: 443
+        access: full
+      - host: auth.docker.io
+        port: 443
+        access: full
+      - host: nvcr.io
+        port: 443
+        access: full
+      - host: authn.nvidia.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/bin/docker }

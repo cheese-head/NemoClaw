@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: discord
+  description: "Discord API full access with WebSocket (read, post, edit, delete, and real-time gateway)"
+
+network_policies:
+  discord:
+    name: discord
+    endpoints:
+      - host: discord.com
+        port: 443
+        access: full
+      # WebSocket gateway — must use access: full (CONNECT tunnel) instead
+      # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills
+      # long-lived WebSocket connections; a CONNECT tunnel avoids
+      # HTTP-level timeouts entirely. See #409.
+      - host: gateway.discord.gg
+        port: 443
+        access: full
+      - host: cdn.discordapp.com
+        port: 443
+        access: full
+      - host: media.discordapp.net
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/node }

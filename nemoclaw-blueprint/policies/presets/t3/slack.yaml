@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: slack
+  description: "Slack API full access with Socket Mode (read, post, edit, delete, and webhooks)"
+
+network_policies:
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        access: full
+      - host: api.slack.com
+        port: 443
+        access: full
+      - host: hooks.slack.com
+        port: 443
+        access: full
+      # Socket Mode WebSocket — requires CONNECT tunnel to avoid
+      # HTTP idle timeout killing the persistent connection. See #409.
+      - host: wss-primary.slack.com
+        port: 443
+        access: full
+      - host: wss-backup.slack.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/node }

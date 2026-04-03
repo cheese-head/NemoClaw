@@ -3015,27 +3015,75 @@ async function setupOpenclaw(sandboxName, model, provider) {
 
 // ── Step 7: Policy presets ───────────────────────────────────────
 
+const VALID_TIERS = ["t1", "t2", "t3"];
+
+async function selectPolicyTier() {
+  if (isNonInteractive()) {
+    const tier = (process.env.NEMOCLAW_POLICY_TIER || "t2").trim().toLowerCase();
+    if (!VALID_TIERS.includes(tier)) {
+      console.error(`  Unknown NEMOCLAW_POLICY_TIER: ${tier}. Valid values: t1, t2, t3`);
+      process.exit(1);
+    }
+    note(`  [non-interactive] Policy tier: ${tier} (${policies.TIERS[tier].label})`);
+    return tier;
+  }
+
+  const tierEntries = Object.values(policies.TIERS);
+  console.log("");
+  console.log("  Select a security tier for your sandbox:");
+  tierEntries.forEach((t, i) => {
+    const recommended = t.name === "t2" ? " [recommended]" : "";
+    console.log(`    ${i + 1}) ${t.name.toUpperCase()}  ${t.label.padEnd(14)} — ${t.description}${recommended}`);
+    console.log(`         Typical users: ${t.personas}`);
+  });
+  console.log("");
+  const answer = await prompt("  Choose tier [2]: ");
+  const trimmed = answer.trim().toLowerCase();
+  const tierMap = { "1": "t1", "t1": "t1", "2": "t2", "t2": "t2", "3": "t3", "t3": "t3" };
+  const tier = tierMap[trimmed || "2"] || "t2";
+  console.log(`  ✓ Tier: ${tier.toUpperCase()} — ${policies.TIERS[tier].label}`);
+  return tier;
+}
+
+function buildTierSuggestions(tier) {
+  const suggestions = [];
+
+  if (tier === "t1") {
+    suggestions.push("pypi");
+  } else if (tier === "t2") {
+    suggestions.push("pypi", "npm");
+    if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) {
+      suggestions.push("slack");
+      console.log("  Auto-detected: SLACK_BOT_TOKEN → suggesting slack preset");
+    }
+  } else {
+    // t3
+    suggestions.push("pypi", "npm");
+    if (getCredential("TELEGRAM_BOT_TOKEN")) {
+      suggestions.push("telegram");
+      console.log("  Auto-detected: TELEGRAM_BOT_TOKEN → suggesting telegram preset");
+    }
+    if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) {
+      suggestions.push("slack");
+      console.log("  Auto-detected: SLACK_BOT_TOKEN → suggesting slack preset");
+    }
+    if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN) {
+      suggestions.push("discord");
+      console.log("  Auto-detected: DISCORD_BOT_TOKEN → suggesting discord preset");
+    }
+  }
+
+  return suggestions;
+}
+
 // eslint-disable-next-line complexity
 async function _setupPolicies(sandboxName) {
   step(7, 7, "Policy presets");
 
-  const suggestions = ["pypi", "npm"];
+  const selectedTier = await selectPolicyTier();
+  const suggestions = buildTierSuggestions(selectedTier);
 
-  // Auto-detect based on env tokens
-  if (getCredential("TELEGRAM_BOT_TOKEN")) {
-    suggestions.push("telegram");
-    console.log("  Auto-detected: TELEGRAM_BOT_TOKEN → suggesting telegram preset");
-  }
-  if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) {
-    suggestions.push("slack");
-    console.log("  Auto-detected: SLACK_BOT_TOKEN → suggesting slack preset");
-  }
-  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN) {
-    suggestions.push("discord");
-    console.log("  Auto-detected: DISCORD_BOT_TOKEN → suggesting discord preset");
-  }
-
-  const allPresets = policies.listPresets();
+  const allPresets = policies.listTierPresets(selectedTier);
   const applied = policies.getAppliedPresets(sandboxName);
 
   if (isNonInteractive()) {
@@ -3079,7 +3127,7 @@ async function _setupPolicies(sandboxName) {
     for (const name of selectedPresets) {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
-          policies.applyPreset(sandboxName, name);
+          policies.applyPreset(sandboxName, name, selectedTier);
           break;
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
@@ -3128,7 +3176,7 @@ async function _setupPolicies(sandboxName) {
         .filter(Boolean);
       for (const name of selected) {
         try {
-          policies.applyPreset(sandboxName, name);
+          policies.applyPreset(sandboxName, name, selectedTier);
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
           if (message.includes("Unimplemented")) {
@@ -3142,7 +3190,7 @@ async function _setupPolicies(sandboxName) {
       // Apply suggested
       for (const name of suggestions) {
         try {
-          policies.applyPreset(sandboxName, name);
+          policies.applyPreset(sandboxName, name, selectedTier);
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
           if (message.includes("Unimplemented")) {
@@ -3171,13 +3219,13 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 
   step(7, 7, "Policy presets");
 
-  const suggestions = ["pypi", "npm"];
-  if (getCredential("TELEGRAM_BOT_TOKEN")) suggestions.push("telegram");
-  if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
-  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN)
-    suggestions.push("discord");
+  // Tier selection (skipped on resume when presets are already provided)
+  const selectedTier = selectedPresets && selectedPresets.length > 0
+    ? (options.tier || "t2")
+    : await selectPolicyTier();
 
-  const allPresets = policies.listPresets();
+  const suggestions = buildTierSuggestions(selectedTier);
+  const allPresets = policies.listTierPresets(selectedTier);
   const applied = policies.getAppliedPresets(sandboxName);
   let chosen = selectedPresets;
 
@@ -3190,7 +3238,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     note(`  [resume] Reapplying policy presets: ${chosen.join(", ")}`);
     for (const name of chosen) {
       if (applied.includes(name)) continue;
-      policies.applyPreset(sandboxName, name);
+      policies.applyPreset(sandboxName, name, selectedTier);
     }
     return chosen;
   }
@@ -3237,7 +3285,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     for (const name of chosen) {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
-          policies.applyPreset(sandboxName, name);
+          policies.applyPreset(sandboxName, name, selectedTier);
           break;
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
@@ -3304,7 +3352,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   }
 
   for (const name of interactiveChoice) {
-    policies.applyPreset(sandboxName, name);
+    policies.applyPreset(sandboxName, name, selectedTier);
   }
   return interactiveChoice;
 }

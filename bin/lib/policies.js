@@ -12,6 +12,70 @@ const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
+
+const TIERS = {
+  t1: {
+    name: "t1",
+    label: "Enterprise",
+    description: "Safest default — minimal external access, read-only; for regulated environments",
+    personas: "IT admins, compliance-focused operators, finance/legal/health",
+    dir: path.join(PRESETS_DIR, "t1"),
+  },
+  t2: {
+    name: "t2",
+    label: "Professional",
+    description: "Balanced productivity — approved tools with bounded read and write access",
+    personas: "Team leads, data scientists, software engineers",
+    dir: path.join(PRESETS_DIR, "t2"),
+  },
+  t3: {
+    name: "t3",
+    label: "Hobbyist",
+    description: "Maximum capability — broad access for solo developers and home lab use",
+    personas: "Open source contributors, home productivity enthusiasts",
+    dir: path.join(PRESETS_DIR, "t3"),
+  },
+};
+
+function getTierDir(tier) {
+  const t = TIERS[tier];
+  if (!t) throw new Error(`Unknown tier: ${tier}. Valid values: t1, t2, t3`);
+  return t.dir;
+}
+
+function listTierPresets(tier) {
+  const dir = getTierDir(tier);
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".yaml"))
+    .map((f) => {
+      const content = fs.readFileSync(path.join(dir, f), "utf-8");
+      const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
+      const descMatch = content.match(/^\s*description:\s*"?([^"]*)"?$/m);
+      return {
+        file: f,
+        name: nameMatch ? nameMatch[1].trim() : f.replace(".yaml", ""),
+        description: descMatch ? descMatch[1].trim() : "",
+        tier,
+      };
+    });
+}
+
+function loadTierPreset(tier, name) {
+  const dir = getTierDir(tier);
+  const file = path.resolve(dir, `${name}.yaml`);
+  if (!file.startsWith(dir + path.sep) && file !== dir) {
+    console.error(`  Invalid preset name: ${name}`);
+    return null;
+  }
+  if (!fs.existsSync(file)) {
+    console.error(`  Preset not found in tier ${tier}: ${name}`);
+    return null;
+  }
+  return fs.readFileSync(file, "utf-8");
+}
+
 function getOpenshellCommand() {
   const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
   if (!binary) return "openshell";
@@ -217,7 +281,7 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
 
   return YAML.stringify(output);
 }
-function applyPreset(sandboxName, presetName) {
+function applyPreset(sandboxName, presetName, tier = null) {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
@@ -228,7 +292,7 @@ function applyPreset(sandboxName, presetName) {
     );
   }
 
-  const presetContent = loadPreset(presetName);
+  const presetContent = tier ? loadTierPreset(tier, presetName) : loadPreset(presetName);
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
@@ -338,8 +402,11 @@ function selectFromList(items, { applied = [] } = {}) {
 
 module.exports = {
   PRESETS_DIR,
+  TIERS,
   listPresets,
+  listTierPresets,
   loadPreset,
+  loadTierPreset,
   getPresetEndpoints,
   extractPresetEntries,
   parseCurrentPolicy,
