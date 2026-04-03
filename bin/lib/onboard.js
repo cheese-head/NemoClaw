@@ -3096,8 +3096,12 @@ async function _setupPolicies(sandboxName) {
     try {
       mergedYaml = await selectAndMerge();
     } catch (err) {
-      console.error(`  Policy selection cancelled or failed: ${err.message}`);
-      return;
+      if (err && err.isCancellation) {
+        console.log("  Policy selection cancelled by user.");
+        return;
+      }
+      console.error(`  Policy selection failed: ${err && err.stack ? err.stack : err}`);
+      process.exit(1);
     }
 
     if (!waitForSandboxReady(sandboxName)) {
@@ -3223,8 +3227,12 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   try {
     mergedYaml = await selectAndMerge();
   } catch (err) {
-    console.error(`  Policy selection cancelled or failed: ${err.message}`);
-    return [];
+    if (err && err.isCancellation) {
+      console.log("  Policy selection cancelled by user.");
+      return [];
+    }
+    console.error(`  Policy selection failed: ${err && err.stack ? err.stack : err}`);
+    process.exit(1);
   }
 
   if (onSelection) onSelection(["custom"]);

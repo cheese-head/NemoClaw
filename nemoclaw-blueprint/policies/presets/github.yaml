@@ -46,7 +46,7 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: /** }
+          - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/git }

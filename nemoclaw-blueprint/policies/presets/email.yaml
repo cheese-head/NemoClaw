@@ -26,7 +26,7 @@ network_policies:
             exfil_risk: "GET exposes email message metadata and content from the inbox"
           - allow: { method: GET, path: /gmail/v1/users/*/messages/* }
             exfil_risk: "GET exposes full email content including attachments"
-          - allow: { method: GET, path: /gmail/v1/threads }
+          - allow: { method: GET, path: /gmail/v1/users/*/threads }
             exfil_risk: "GET exposes email thread metadata"
           - allow: { method: GET, path: /gmail/v1/users/*/threads/* }
             exfil_risk: "GET exposes full email thread content"

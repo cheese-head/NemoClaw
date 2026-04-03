@@ -3,8 +3,7 @@
 
 preset:
   name: gitlab
-  description: "GitLab REST API and repository access"
-
+  description: "GitLab REST API access"
 
 network_policies:
   gitlab:
@@ -37,4 +36,3 @@ network_policies:
             exfil_risk: "PUT can overwrite merge request content on external GitLab repositories"
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/bin/git }

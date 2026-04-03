@@ -139,9 +139,22 @@ function composePresets(toolSelections, presetsDir = PRESETS_DIR) {
   const policies  = {};
   const missing   = [];
   const warnings  = [];
-  const multi     = toolSelections.length > 1;
 
-  for (const { tool, level } of toolSelections) {
+  // Deduplicate by tool.id, keeping the highest access level ("write" > "read").
+  const levelRank = { read: 0, write: 1 };
+  const deduped = Object.values(
+    toolSelections.reduce((acc, sel) => {
+      const existing = acc[sel.tool.id];
+      if (!existing || (levelRank[sel.level] ?? 0) > (levelRank[existing.level] ?? 0)) {
+        acc[sel.tool.id] = sel;
+      }
+      return acc;
+    }, {}),
+  );
+
+  const multi = deduped.length > 1;
+
+  for (const { tool, level } of deduped) {
     const preset = loadPreset(tool.id, presetsDir);
     if (!preset) {
       missing.push(tool.id);
@@ -185,13 +198,14 @@ function composePresets(toolSelections, presetsDir = PRESETS_DIR) {
  * @returns {string}
  */
 function buildPresetYaml(presetName, policies, fsAccess) {
-  // Re-stamp enforcement + tls on each REST endpoint.
+  const acc = fsAccess || {};
+
+  // Re-stamp enforcement + tls on each REST endpoint (clone to avoid mutating input).
   for (const block of Object.values(policies)) {
-    for (const ep of block.endpoints || []) {
-      if (ep.access === "full") continue; // tunnel — leave alone
-      ep.enforcement = "enforce";
-      ep.tls         = ep.tls ?? "terminate";
-    }
+    block.endpoints = (block.endpoints || []).map((ep) => {
+      if (ep.access === "full") return ep; // tunnel — leave alone
+      return { ...ep, enforcement: "enforce", tls: ep.tls ?? "terminate" };
+    });
   }
 
   const doc = {
@@ -199,8 +213,8 @@ function buildPresetYaml(presetName, policies, fsAccess) {
 
     filesystem_policy: {
       include_workdir: true,
-      read_only:  ["/usr", "/lib", "/etc", "/app",    ...(fsAccess.readOnly  || [])],
-      read_write: ["/sandbox", "/tmp", "/dev/null",   ...(fsAccess.readWrite || [])],
+      read_only:  ["/usr", "/lib", "/etc", "/app",    ...(acc.readOnly  || [])],
+      read_write: ["/sandbox", "/tmp", "/dev/null",   ...(acc.readWrite || [])],
     },
 
     landlock: { compatibility: "best_effort" },

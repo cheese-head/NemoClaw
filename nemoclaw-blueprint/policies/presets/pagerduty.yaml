@@ -5,7 +5,6 @@ preset:
   name: pagerduty
   description: "PagerDuty incident and on-call management API"
 
-
 network_policies:
   pagerduty:
     name: pagerduty

@@ -44,74 +44,6 @@ const C = {
 };
 
 // ---------------------------------------------------------------------------
-// Tool catalog
-// ---------------------------------------------------------------------------
-
-const TOOLS = {
-  github:     { id: "github",     name: "GitHub",          hosts: ["api.github.com"],            risk: { read: 1, write: 2 }, category: "dev"   },
-  gitlab:     { id: "gitlab",     name: "GitLab",          hosts: ["gitlab.com"],                risk: { read: 1, write: 2 }, category: "dev"   },
-  linear:     { id: "linear",     name: "Linear",          hosts: ["api.linear.app"],            risk: { read: 1, write: 1 }, category: "pm"    },
-  jira:       { id: "jira",       name: "Jira",            hosts: ["*.atlassian.net"],           risk: { read: 1, write: 2 }, category: "pm"    },
-  confluence: { id: "confluence", name: "Confluence",      hosts: ["*.atlassian.net"],           risk: { read: 1, write: 1 }, category: "know"  },
-  notion:     { id: "notion",     name: "Notion",          hosts: ["api.notion.com"],            risk: { read: 1, write: 1 }, category: "know"  },
-  slack:      { id: "slack",      name: "Slack",           hosts: ["slack.com"],                 risk: { read: 2, write: 2 }, category: "comms" },
-  discord:    { id: "discord",    name: "Discord",         hosts: ["discord.com"],               risk: { read: 2, write: 2 }, category: "comms" },
-  teams:      { id: "teams",      name: "MS Teams",        hosts: ["graph.microsoft.com"],       risk: { read: 2, write: 2 }, category: "comms" },
-  email:      { id: "email",      name: "Gmail",           hosts: ["gmail.googleapis.com"],      risk: { read: 3, write: 3 }, category: "comms", highRisk: true },
-  calendar:   { id: "calendar",   name: "Google Calendar", hosts: ["www.googleapis.com"],        risk: { read: 2, write: 3 }, category: "cal"   },
-  datadog:    { id: "datadog",    name: "Datadog",         hosts: ["api.datadoghq.com"],         risk: { read: 1, write: 1 }, category: "obs"   },
-  pagerduty:  { id: "pagerduty",  name: "PagerDuty",       hosts: ["api.pagerduty.com"],         risk: { read: 1, write: 2 }, category: "obs"   },
-  grafana:    { id: "grafana",    name: "Grafana",         hosts: ["grafana.com"],               risk: { read: 1, write: 1 }, category: "obs"   },
-  websearch:  { id: "websearch",  name: "Web search",      hosts: ["api.search.brave.com"],      risk: { read: 1, write: 0 }, category: "web"   },
-  stripe:     { id: "stripe",     name: "Stripe",          hosts: ["api.stripe.com"],            risk: { read: 2, write: 3 }, category: "fin",   highRisk: true },
-  openai:     { id: "openai",     name: "OpenAI API",      hosts: ["api.openai.com"],            risk: { read: 0, write: 1 }, category: "ai"    },
-  sendgrid:   { id: "sendgrid",   name: "SendGrid",        hosts: ["api.sendgrid.com"],          risk: { read: 1, write: 2 }, category: "email" },
-};
-
-// ---------------------------------------------------------------------------
-// Use-case definitions (Q1)
-// ---------------------------------------------------------------------------
-
-const USE_CASES = [
-  {
-    id: "observability",
-    name: "Observability",
-    desc: "Monitor metrics, logs and alerts",
-    tools: ["datadog", "pagerduty", "grafana", "slack"],
-  },
-  {
-    id: "knowledge",
-    name: "Knowledge Assistant",
-    desc: "Search, summarize and answer questions",
-    tools: ["websearch", "confluence", "notion", "github"],
-  },
-  {
-    id: "data",
-    name: "Data Analysis",
-    desc: "Process and analyze structured data",
-    tools: ["github", "websearch", "notion", "slack"],
-  },
-  {
-    id: "tooling",
-    name: "Tool-Integrated AI",
-    desc: "Connect AI to developer and PM tools",
-    tools: ["github", "jira", "linear", "slack", "confluence"],
-  },
-  {
-    id: "autonomous",
-    name: "Autonomous Agent",
-    desc: "Full task execution with broad access",
-    tools: ["github", "jira", "slack", "email", "websearch", "calendar"],
-  },
-  {
-    id: "custom",
-    name: "Custom",
-    desc: "I'll pick the tools myself",
-    tools: [],
-  },
-];
-
-// ---------------------------------------------------------------------------
 // Raw-mode TUI helpers
 // ---------------------------------------------------------------------------
 
@@ -212,113 +144,6 @@ function promptArrowSelect(title, options, defaultIdx = 0) {
           renderConfirmed(vis[cursor].name);
           resolve(vis[cursor].origIdx);
         }
-      } else if (key === "\x1b") {
-        filter = ""; cursor = 0; redraw();
-      } else if (key === "\x7f" || key === "\b") {
-        filter = filter.slice(0, -1); cursor = 0; redraw();
-      } else if (isPrintable(key)) {
-        filter += key; cursor = 0; redraw();
-      } else if (key === "\u0003") {
-        rawCleanup(handler);
-        process.stderr.write(`\n  ${C.dim}Goodbye.${C.reset}\n\n`);
-        process.exit(0);
-      }
-    };
-
-    rawInput(handler);
-    function redraw() { process.stdout.write(`\x1b[${lineCount}A\x1b[0J`); render(); }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Q2 — Tool checklist  (↑↓ · Space toggle · type to filter · Enter confirm)
-// ---------------------------------------------------------------------------
-
-function promptChecklist(title, items, preSelected = []) {
-  return new Promise((resolve) => {
-    let cursor = 0;
-    let filter = "";
-    const selected = new Set(
-      preSelected.map((id) => items.findIndex((t) => t.id === id)).filter((i) => i >= 0),
-    );
-    let lineCount = 0;
-
-    function filtered() {
-      if (!filter) return items.map((item, i) => ({ item, fullIdx: i }));
-      const lf = filter.toLowerCase();
-      return items
-        .map((item, i) => ({ item, fullIdx: i }))
-        .filter(({ item }) =>
-          item.name.toLowerCase().includes(lf) || item.category.toLowerCase().includes(lf),
-        );
-    }
-
-    function riskDot(item) {
-      const r = item.risk.read;
-      if (r <= 1) return `${C.green}●${C.reset}`;
-      if (r <= 2) return `${C.yellow}●${C.reset}`;
-      return `${C.red}●${C.reset}`;
-    }
-
-    // Show whether a preset file exists for this tool.
-    function presetBadge(item) {
-      const exists = fs.existsSync(path.join(PRESETS_DIR, `${item.id}.yaml`));
-      return exists ? `${C.dim}preset${C.reset}` : `${C.yellow}no preset${C.reset}`;
-    }
-
-    function render() {
-      let n = 0;
-      const vis = filtered();
-      if (cursor >= vis.length) cursor = Math.max(0, vis.length - 1);
-      n = writeLine(`  ${C.bold}${title}${C.reset}`, n);
-      n = writeLine("", n);
-      if (vis.length === 0) {
-        n = writeLine(`  ${C.dim}No matches for "${filter}"${C.reset}`, n);
-      } else {
-        for (let i = 0; i < vis.length; i++) {
-          const { item, fullIdx } = vis[i];
-          const isSel  = selected.has(fullIdx);
-          const isCurs = i === cursor;
-          const curs   = isCurs ? `${C.green}▶${C.reset}` : " ";
-          const check  = isSel  ? `${C.green}✓${C.reset}` : " ";
-          const warn   = item.highRisk ? ` ${C.red}⚠${C.reset}` : "";
-          n = writeLine(
-            `  ${curs} [${check}] ${item.name.padEnd(18)} ${riskDot(item)}  ${C.dim}${item.category.padEnd(6)}${C.reset}  ${presetBadge(item)}${warn}`,
-            n,
-          );
-        }
-      }
-      n = writeLine("", n);
-      const selHint = selected.size === 0 ? " · select at least one" : ` · ${selected.size} selected`;
-      const hint = filter
-        ? `  ${C.dim}Filter:${C.reset} ${filter}${C.dim}▌  Esc clear${selHint}${C.reset}`
-        : `  ${C.dim}↑↓ cycle · Space toggle · type to filter · Enter confirm${selHint}${C.reset}`;
-      n = writeLine(hint, n);
-      lineCount = n;
-    }
-
-    render();
-
-    const handler = (key) => {
-      const vis = filtered();
-      if (key === "\x1b[A") {
-        cursor = (cursor - 1 + Math.max(vis.length, 1)) % Math.max(vis.length, 1);
-        redraw();
-      } else if (key === "\x1b[B") {
-        cursor = (cursor + 1) % Math.max(vis.length, 1);
-        redraw();
-      } else if (key === " ") {
-        if (vis.length > 0) {
-          const fullIdx = vis[cursor].fullIdx;
-          if (selected.has(fullIdx)) selected.delete(fullIdx);
-          else selected.add(fullIdx);
-          redraw();
-        }
-      } else if (key === "\r" || key === "\n") {
-        if (selected.size === 0) return;
-        rawCleanup(handler);
-        process.stdout.write("\n");
-        resolve(items.filter((_, i) => selected.has(i)));
       } else if (key === "\x1b") {
         filter = ""; cursor = 0; redraw();
       } else if (key === "\x7f" || key === "\b") {
@@ -527,18 +352,6 @@ async function promptFilesystemPaths() {
 
   process.stdout.write("\n");
   return { readOnly, readWrite };
-}
-
-// ---------------------------------------------------------------------------
-// Save helper
-// ---------------------------------------------------------------------------
-
-const PRESETS_OUT_DIR = path.resolve(__dirname, "../../nemoclaw-blueprint/policies/presets");
-
-function savePreset(name, content) {
-  const file = path.join(PRESETS_OUT_DIR, `${name}.yaml`);
-  fs.writeFileSync(file, content, "utf-8");
-  return file;
 }
 
 // ---------------------------------------------------------------------------

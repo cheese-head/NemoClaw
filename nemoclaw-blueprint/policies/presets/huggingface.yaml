@@ -35,6 +35,7 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+            exfil_risk: "GET may expose model outputs or metadata from Hugging Face inference endpoints"
           - allow: { method: POST, path: "/**" }
             exfil_risk: "POST sends arbitrary input data to Hugging Face hosted inference endpoints"
     binaries:

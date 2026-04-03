@@ -217,6 +217,14 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
   return YAML.stringify(output);
 }
 function applyPresetFromContent(sandboxName, content) {
+  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
+  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+    throw new Error(
+      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
+        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+    );
+  }
+
   const presetEntries = extractPresetEntries(content);
   if (!presetEntries) throw new Error("Provided policy content has no network_policies section.");
 
@@ -225,13 +233,25 @@ function applyPresetFromContent(sandboxName, content) {
     rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
   } catch { /* ignored */ }
 
-  const merged  = mergePresetIntoPolicy(parseCurrentPolicy(rawPolicy), presetEntries);
+  const merged  = mergePresetIntoPolicy(rawPolicy, presetEntries);
   const tmpDir  = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
   fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
   try {
     run(buildPolicySetCommand(tmpFile, sandboxName));
+
+    const presetName = YAML.parse(content)?.preset?.name;
+    if (presetName) {
+      const sandbox = registry.getSandbox(sandboxName);
+      if (sandbox) {
+        const pols = sandbox.policies || [];
+        if (!pols.includes(presetName)) {
+          pols.push(presetName);
+        }
+        registry.updateSandbox(sandboxName, { policies: pols });
+      }
+    }
   } finally {
     try { fs.unlinkSync(tmpFile); } catch { /* ignored */ }
     try { fs.rmdirSync(tmpDir);   } catch { /* ignored */ }

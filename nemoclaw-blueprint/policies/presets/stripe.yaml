@@ -5,7 +5,6 @@ preset:
   name: stripe
   description: "Stripe payment processing API"
 
-
 network_policies:
   stripe:
     name: stripe

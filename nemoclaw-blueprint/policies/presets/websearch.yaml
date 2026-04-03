@@ -5,7 +5,6 @@ preset:
   name: websearch
   description: "Brave Search API for web and news search"
 
-
 network_policies:
   websearch:
     name: websearch
