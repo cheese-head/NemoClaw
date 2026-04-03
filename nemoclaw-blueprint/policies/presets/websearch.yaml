@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: websearch
+  description: "Brave Search API for web and news search"
+
+
+network_policies:
+  websearch:
+    name: websearch
+    endpoints:
+      - host: api.search.brave.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /res/v1/web/search }
+            exfil_risk: "GET search query parameters can encode and transmit data to Brave Search"
+          - allow: { method: GET, path: /res/v1/news/search }
+            exfil_risk: "GET search query parameters can encode and transmit data to Brave Search"
+          - allow: { method: GET, path: /res/v1/images/search }
+            exfil_risk: "GET search query parameters can encode and transmit data to Brave Search"
+    binaries:
+      - { path: /usr/local/bin/node }

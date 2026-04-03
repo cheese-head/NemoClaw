@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: confluence
+  description: "Confluence Cloud wiki and pages API"
+
+
+network_policies:
+  confluence:
+    name: confluence
+    endpoints:
+      - host: auth.atlassian.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /authorize }
+          - allow: { method: POST, path: /oauth/token }
+      - host: api.atlassian.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/pages }
+            exfil_risk: "GET exposes Confluence page metadata and content"
+          - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/pages/* }
+            exfil_risk: "GET exposes full Confluence page content including attachments"
+          - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/spaces }
+          - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/spaces/* }
+          - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/search }
+            exfil_risk: "GET search results expose Confluence page content matching arbitrary queries"
+          - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/labels }
+          - allow: { method: POST, path: /ex/confluence/*/wiki/api/v2/pages }
+            exfil_risk: "POST can write wiki page content to external Confluence spaces"
+          - allow: { method: PUT, path: /ex/confluence/*/wiki/api/v2/pages/* }
+            exfil_risk: "PUT can overwrite existing Confluence page content"
+          - allow: { method: DELETE, path: /ex/confluence/*/wiki/api/v2/pages/* }
+    binaries:
+      - { path: /usr/local/bin/node }

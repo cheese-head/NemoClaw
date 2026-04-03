@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: linear
+  description: "Linear project management GraphQL API"
+
+
+network_policies:
+  linear:
+    name: linear
+    endpoints:
+      - host: api.linear.app
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          # Linear is a pure GraphQL API — all reads and writes go through POST /graphql.
+          # GET is included for introspection and health checks.
+          - allow: { method: GET, path: /graphql }
+          - allow: { method: POST, path: /graphql }
+            exfil_risk: "POST /graphql handles all Linear writes — can create or update issues, projects, and comments with arbitrary content"
+    binaries:
+      - { path: /usr/local/bin/node }

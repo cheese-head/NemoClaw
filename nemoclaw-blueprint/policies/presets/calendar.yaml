@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: calendar
+  description: "Google Calendar API for reading and managing events"
+
+
+network_policies:
+  calendar:
+    name: calendar
+    endpoints:
+      - host: oauth2.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: /token }
+      - host: www.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /calendar/v3/users/me/calendarList }
+          - allow: { method: GET, path: /calendar/v3/calendars/* }
+          - allow: { method: GET, path: /calendar/v3/calendars/*/events }
+            exfil_risk: "GET exposes calendar event metadata including attendees and titles"
+          - allow: { method: GET, path: /calendar/v3/calendars/*/events/* }
+            exfil_risk: "GET exposes full calendar event details including attendees, location, and description"
+          - allow: { method: POST, path: /calendar/v3/calendars/*/events }
+            exfil_risk: "POST can create calendar events with arbitrary attendees and content"
+          - allow: { method: PUT, path: /calendar/v3/calendars/*/events/* }
+            exfil_risk: "PUT can overwrite calendar event content and attendees"
+          - allow: { method: PATCH, path: /calendar/v3/calendars/*/events/* }
+            exfil_risk: "PATCH can modify calendar event details and attendees"
+          - allow: { method: DELETE, path: /calendar/v3/calendars/*/events/* }
+    binaries:
+      - { path: /usr/local/bin/node }

@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: github
+  description: "GitHub REST API and raw content access"
+
+network_policies:
+  github:
+    name: github
+    endpoints:
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /repos }
+          - allow: { method: GET, path: /repos/* }
+          - allow: { method: GET, path: /orgs }
+          - allow: { method: GET, path: /orgs/* }
+          - allow: { method: GET, path: /users/* }
+          - allow: { method: GET, path: /search/** }
+            exfil_risk: "GET search query parameters can encode and transmit data to GitHub"
+          - allow: { method: GET, path: /issues/** }
+          - allow: { method: GET, path: /pulls/** }
+          - allow: { method: GET, path: /gists/** }
+          - allow: { method: GET, path: /notifications }
+          - allow: { method: POST, path: /repos/** }
+            exfil_risk: "POST can push code, files, or data to external GitHub repositories"
+          - allow: { method: POST, path: /issues/** }
+            exfil_risk: "POST can write issue content to external GitHub repositories"
+          - allow: { method: POST, path: /pulls/** }
+            exfil_risk: "POST can write pull request content to external GitHub repositories"
+          - allow: { method: PATCH, path: /repos/** }
+            exfil_risk: "PATCH can modify repository content on external GitHub"
+          - allow: { method: PATCH, path: /issues/** }
+            exfil_risk: "PATCH can modify issue content on external GitHub repositories"
+          - allow: { method: PATCH, path: /pulls/** }
+            exfil_risk: "PATCH can modify pull request content on external GitHub repositories"
+          - allow: { method: PUT, path: /repos/** }
+            exfil_risk: "PUT can write files directly to external GitHub repositories"
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /** }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/git }

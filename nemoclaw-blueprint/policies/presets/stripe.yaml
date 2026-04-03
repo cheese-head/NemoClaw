@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: stripe
+  description: "Stripe payment processing API"
+
+
+network_policies:
+  stripe:
+    name: stripe
+    endpoints:
+      - host: api.stripe.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /v1/customers }
+            exfil_risk: "GET exposes customer PII including name, email, and billing address"
+          - allow: { method: GET, path: /v1/customers/* }
+            exfil_risk: "GET exposes full customer record including PII and payment methods"
+          - allow: { method: GET, path: /v1/charges }
+            exfil_risk: "GET exposes payment charge history and amounts"
+          - allow: { method: GET, path: /v1/charges/* }
+            exfil_risk: "GET exposes full charge details including card last4 and billing info"
+          - allow: { method: GET, path: /v1/invoices }
+            exfil_risk: "GET exposes invoice history and financial data"
+          - allow: { method: GET, path: /v1/invoices/* }
+            exfil_risk: "GET exposes full invoice details including line items and amounts"
+          - allow: { method: GET, path: /v1/subscriptions }
+            exfil_risk: "GET exposes subscription data including pricing and renewal dates"
+          - allow: { method: GET, path: /v1/subscriptions/* }
+            exfil_risk: "GET exposes full subscription details including payment schedule"
+          - allow: { method: GET, path: /v1/payment_intents }
+            exfil_risk: "GET exposes payment intent metadata and amounts"
+          - allow: { method: GET, path: /v1/payment_intents/* }
+            exfil_risk: "GET exposes full payment intent including amount and status"
+          - allow: { method: GET, path: /v1/balance }
+            exfil_risk: "GET exposes account balance and available funds"
+          - allow: { method: POST, path: /v1/customers }
+            exfil_risk: "POST can create customer records with attacker-controlled data"
+          - allow: { method: POST, path: /v1/payment_intents }
+            exfil_risk: "POST can initiate payment intents for arbitrary amounts"
+          - allow: { method: POST, path: /v1/payment_intents/*/confirm }
+            exfil_risk: "POST can confirm and charge payment intents"
+          - allow: { method: POST, path: /v1/refunds }
+            exfil_risk: "POST can issue refunds to arbitrary charges"
+          - allow: { method: POST, path: /v1/invoices/*/finalize }
+            exfil_risk: "POST finalizes and sends invoices to customers"
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/local/bin/python3 }

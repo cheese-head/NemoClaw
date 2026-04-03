@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: grafana
+  description: "Grafana Cloud dashboards, datasources, and alerts API"
+
+
+network_policies:
+  grafana:
+    name: grafana
+    endpoints:
+      - host: grafana.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /api/dashboards/uid/* }
+          - allow: { method: GET, path: /api/datasources }
+          - allow: { method: GET, path: /api/datasources/* }
+          - allow: { method: GET, path: /api/alerts }
+          - allow: { method: GET, path: /api/annotations }
+          - allow: { method: GET, path: /api/org }
+          - allow: { method: GET, path: /api/search }
+          - allow: { method: POST, path: /api/dashboards/db }
+            exfil_risk: "POST can write dashboard definitions with arbitrary queries to external Grafana"
+          - allow: { method: POST, path: /api/annotations }
+            exfil_risk: "POST can write arbitrary annotation content to Grafana dashboards"
+          - allow: { method: PUT, path: /api/datasources/* }
+            exfil_risk: "PUT can redirect datasource connections to attacker-controlled endpoints"
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/local/bin/python3 }

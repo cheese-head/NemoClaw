@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: datadog
+  description: "Datadog metrics, dashboards, monitors, and logs API"
+
+
+network_policies:
+  datadog:
+    name: datadog
+    endpoints:
+      - host: api.datadoghq.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /api/v1/query }
+          - allow: { method: GET, path: /api/v1/metrics }
+          - allow: { method: GET, path: /api/v1/monitor }
+          - allow: { method: GET, path: /api/v1/monitor/* }
+          - allow: { method: GET, path: /api/v1/dashboard }
+          - allow: { method: GET, path: /api/v1/dashboard/* }
+          - allow: { method: GET, path: /api/v1/events }
+          - allow: { method: GET, path: /api/v2/metrics/* }
+          - allow: { method: POST, path: /api/v1/series }
+            exfil_risk: "POST can submit arbitrary metric data to external Datadog account"
+          - allow: { method: POST, path: /api/v1/events }
+            exfil_risk: "POST can publish arbitrary event data to external Datadog"
+          - allow: { method: POST, path: /api/v1/logs/list }
+            exfil_risk: "POST exposes log data matching arbitrary search queries"
+          - allow: { method: POST, path: /api/v1/monitor }
+            exfil_risk: "POST can create monitors that trigger alerts to external destinations"
+          - allow: { method: PUT, path: /api/v1/monitor/* }
+            exfil_risk: "PUT can modify monitor configuration including alert destinations"
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/local/bin/python3 }

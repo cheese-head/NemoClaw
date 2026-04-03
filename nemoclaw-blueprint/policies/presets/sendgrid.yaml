@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: sendgrid
+  description: "SendGrid transactional email delivery API"
+
+network_policies:
+  sendgrid:
+    name: sendgrid
+    endpoints:
+      - host: api.sendgrid.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /v3/stats }
+          - allow: { method: GET, path: /v3/suppression/bounces }
+          - allow: { method: GET, path: /v3/suppression/unsubscribes }
+          - allow: { method: GET, path: /v3/templates }
+          - allow: { method: GET, path: /v3/templates/* }
+          - allow: { method: POST, path: /v3/mail/send }
+            exfil_risk: "POST delivers email to any recipient — direct data exfiltration vector"
+          - allow: { method: POST, path: /v3/templates }
+          - allow: { method: PATCH, path: /v3/templates/* }
+          - allow: { method: DELETE, path: /v3/suppression/bounces }
+    binaries:
+      - { path: /usr/local/bin/node }

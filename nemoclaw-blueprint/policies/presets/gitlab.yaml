@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: gitlab
+  description: "GitLab REST API and repository access"
+
+
+network_policies:
+  gitlab:
+    name: gitlab
+    endpoints:
+      - host: gitlab.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /api/v4/projects }
+          - allow: { method: GET, path: /api/v4/projects/* }
+          - allow: { method: GET, path: /api/v4/groups }
+          - allow: { method: GET, path: /api/v4/groups/* }
+          - allow: { method: GET, path: /api/v4/users/* }
+          - allow: { method: GET, path: /api/v4/issues }
+          - allow: { method: GET, path: /api/v4/merge_requests }
+          - allow: { method: GET, path: /api/v4/search }
+            exfil_risk: "GET search query parameters can encode and transmit data to GitLab"
+          - allow: { method: POST, path: /api/v4/projects/*/issues }
+            exfil_risk: "POST can write issue content to external GitLab repositories"
+          - allow: { method: POST, path: /api/v4/projects/*/merge_requests }
+            exfil_risk: "POST can write merge request content to external GitLab repositories"
+          - allow: { method: POST, path: /api/v4/projects/*/issues/*/notes }
+            exfil_risk: "POST can write comments to external GitLab issues"
+          - allow: { method: PUT, path: /api/v4/projects/*/issues/* }
+            exfil_risk: "PUT can overwrite issue content on external GitLab repositories"
+          - allow: { method: PUT, path: /api/v4/projects/*/merge_requests/* }
+            exfil_risk: "PUT can overwrite merge request content on external GitLab repositories"
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/git }

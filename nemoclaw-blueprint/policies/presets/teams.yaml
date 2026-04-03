@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: teams
+  description: "Microsoft Teams messaging and channels via Graph API"
+
+network_policies:
+  teams:
+    name: teams
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: /*/oauth2/v2.0/token }
+      - host: graph.microsoft.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: /v1.0/me/joinedTeams }
+          - allow: { method: GET, path: /v1.0/teams/* }
+          - allow: { method: GET, path: /v1.0/me/chats }
+          - allow: { method: GET, path: /v1.0/chats/* }
+          - allow: { method: GET, path: /v1.0/chats/*/messages }
+          - allow: { method: GET, path: /v1.0/teams/*/channels }
+          - allow: { method: GET, path: /v1.0/teams/*/channels/*/messages }
+          - allow: { method: POST, path: /v1.0/chats/*/messages }
+            exfil_risk: "POST can send messages to external Teams chats"
+          - allow: { method: POST, path: /v1.0/teams/*/channels/*/messages }
+            exfil_risk: "POST can send messages to external Teams channels"
+    binaries:
+      - { path: /usr/local/bin/node }
