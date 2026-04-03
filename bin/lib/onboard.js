@@ -3264,6 +3264,11 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 
   step(7, 7, "Policy presets");
 
+  const suggestions = ["pypi", "npm"];
+  if (getCredential("TELEGRAM_BOT_TOKEN")) suggestions.push("telegram");
+  if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
+  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN) suggestions.push("discord");
+
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
   let chosen = selectedPresets;
@@ -3283,16 +3288,26 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   }
 
   if (isNonInteractive()) {
-    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "custom").trim().toLowerCase();
+    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
+    chosen = suggestions;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
       note("  [non-interactive] Skipping policy presets.");
       return [];
     }
 
-    chosen = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
-    if ((policyMode === "custom" || policyMode === "list") && chosen.length === 0) {
-      console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
+    if (policyMode === "custom" || policyMode === "list") {
+      chosen = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
+      if (chosen.length === 0) {
+        console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
+        process.exit(1);
+      }
+    } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
+      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
+      if (envPresets.length > 0) chosen = envPresets;
+    } else {
+      console.error(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
+      console.error("  Valid values: suggested, custom, skip");
       process.exit(1);
     }
 
@@ -3332,7 +3347,12 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   }
 
   // Interactive: raw-mode TUI checkbox selector
-  const initialSelected = applied.filter((name) => allPresets.some((p) => p.name === name));
+  // Seed selection with already-applied presets and credential-based suggestions
+  const knownNames = new Set(allPresets.map((p) => p.name));
+  const initialSelected = [
+    ...applied.filter((name) => knownNames.has(name)),
+    ...suggestions.filter((name) => knownNames.has(name) && !applied.includes(name)),
+  ];
   const interactiveChoice = await presetsCheckboxSelector(allPresets, initialSelected);
 
   if (onSelection) onSelection(interactiveChoice);
