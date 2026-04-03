@@ -22,23 +22,23 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
+          # exfil_risk: GET exposes email message metadata and content from the inbox
           - allow: { method: GET, path: /gmail/v1/users/*/messages }
-            exfil_risk: "GET exposes email message metadata and content from the inbox"
+          # exfil_risk: GET exposes full email content including attachments
           - allow: { method: GET, path: /gmail/v1/users/*/messages/* }
-            exfil_risk: "GET exposes full email content including attachments"
+          # exfil_risk: GET exposes email thread metadata
           - allow: { method: GET, path: /gmail/v1/users/*/threads }
-            exfil_risk: "GET exposes email thread metadata"
+          # exfil_risk: GET exposes full email thread content
           - allow: { method: GET, path: /gmail/v1/users/*/threads/* }
-            exfil_risk: "GET exposes full email thread content"
           - allow: { method: GET, path: /gmail/v1/users/*/labels }
           - allow: { method: GET, path: /gmail/v1/users/*/labels/* }
           - allow: { method: GET, path: /gmail/v1/users/*/profile }
+          # exfil_risk: POST sends email to any recipient — direct data exfiltration vector
           - allow: { method: POST, path: /gmail/v1/users/*/messages/send }
-            exfil_risk: "POST sends email to any recipient — direct data exfiltration vector"
           - allow: { method: POST, path: /gmail/v1/users/*/messages/modify }
+          # exfil_risk: POST creates drafts that can be sent to any recipient
           - allow: { method: POST, path: /gmail/v1/users/*/drafts }
-            exfil_risk: "POST creates drafts that can be sent to any recipient"
+          # exfil_risk: PUT updates drafts that can be sent to any recipient
           - allow: { method: PUT, path: /gmail/v1/users/*/drafts/* }
-            exfil_risk: "PUT updates drafts that can be sent to any recipient"
     binaries:
       - { path: /usr/local/bin/node }

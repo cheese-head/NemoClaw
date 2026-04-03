@@ -16,28 +16,28 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
+          # exfil_risk: GET exposes model files, datasets, and repository metadata from Hugging Face Hub
           - allow: { method: GET, path: "/**" }
-            exfil_risk: "GET exposes model files, datasets, and repository metadata from Hugging Face Hub"
+          # exfil_risk: POST can push models, datasets, or arbitrary files to public Hugging Face repositories
           - allow: { method: POST, path: "/**" }
-            exfil_risk: "POST can push models, datasets, or arbitrary files to public Hugging Face repositories"
       - host: cdn-lfs.huggingface.co
         port: 443
         protocol: rest
         enforcement: enforce
         tls: terminate
         rules:
+          # exfil_risk: GET downloads model weights and large files from Hugging Face LFS storage
           - allow: { method: GET, path: "/**" }
-            exfil_risk: "GET downloads model weights and large files from Hugging Face LFS storage"
       - host: api-inference.huggingface.co
         port: 443
         protocol: rest
         enforcement: enforce
         tls: terminate
         rules:
+          # exfil_risk: GET may expose model outputs or metadata from Hugging Face inference endpoints
           - allow: { method: GET, path: "/**" }
-            exfil_risk: "GET may expose model outputs or metadata from Hugging Face inference endpoints"
+          # exfil_risk: POST sends arbitrary input data to Hugging Face hosted inference endpoints
           - allow: { method: POST, path: "/**" }
-            exfil_risk: "POST sends arbitrary input data to Hugging Face hosted inference endpoints"
     binaries:
       - { path: /usr/local/bin/python3 }
       - { path: /usr/local/bin/node }

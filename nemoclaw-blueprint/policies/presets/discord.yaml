@@ -16,12 +16,12 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+          # exfil_risk: POST can send messages and files to external Discord servers
           - allow: { method: POST, path: "/**" }
-            exfil_risk: "POST can send messages and files to external Discord servers"
+          # exfil_risk: PUT can write content to external Discord servers
           - allow: { method: PUT, path: "/**" }
-            exfil_risk: "PUT can write content to external Discord servers"
+          # exfil_risk: PATCH can modify content on external Discord servers
           - allow: { method: PATCH, path: "/**" }
-            exfil_risk: "PATCH can modify content on external Discord servers"
           - allow: { method: DELETE, path: "/**" }
       # WebSocket gateway — must use access: full (CONNECT tunnel) instead
       # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills

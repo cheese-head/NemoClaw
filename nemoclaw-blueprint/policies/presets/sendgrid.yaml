@@ -20,8 +20,8 @@ network_policies:
           - allow: { method: GET, path: /v3/suppression/unsubscribes }
           - allow: { method: GET, path: /v3/templates }
           - allow: { method: GET, path: /v3/templates/* }
+          # exfil_risk: POST delivers email to any recipient — direct data exfiltration vector
           - allow: { method: POST, path: /v3/mail/send }
-            exfil_risk: "POST delivers email to any recipient — direct data exfiltration vector"
           - allow: { method: POST, path: /v3/templates }
           - allow: { method: PATCH, path: /v3/templates/* }
           - allow: { method: DELETE, path: /v3/suppression/bounces }

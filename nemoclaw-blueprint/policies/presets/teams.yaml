@@ -29,9 +29,9 @@ network_policies:
           - allow: { method: GET, path: /v1.0/chats/*/messages }
           - allow: { method: GET, path: /v1.0/teams/*/channels }
           - allow: { method: GET, path: /v1.0/teams/*/channels/*/messages }
+          # exfil_risk: POST can send messages to external Teams chats
           - allow: { method: POST, path: /v1.0/chats/*/messages }
-            exfil_risk: "POST can send messages to external Teams chats"
+          # exfil_risk: POST can send messages to external Teams channels
           - allow: { method: POST, path: /v1.0/teams/*/channels/*/messages }
-            exfil_risk: "POST can send messages to external Teams channels"
     binaries:
       - { path: /usr/local/bin/node }

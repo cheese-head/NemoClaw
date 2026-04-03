@@ -24,14 +24,14 @@ network_policies:
           - allow: { method: GET, path: /schedules/* }
           - allow: { method: GET, path: /alerts }
           - allow: { method: GET, path: /analytics/metrics/incidents }
+          # exfil_risk: POST can create incidents with arbitrary content and trigger notifications to external responders
           - allow: { method: POST, path: /incidents }
-            exfil_risk: "POST can create incidents with arbitrary content and trigger notifications to external responders"
+          # exfil_risk: POST can write arbitrary notes to incidents visible to all responders
           - allow: { method: POST, path: /incidents/*/notes }
-            exfil_risk: "POST can write arbitrary notes to incidents visible to all responders"
+          # exfil_risk: PUT can bulk-update incident content and status
           - allow: { method: PUT, path: /incidents }
-            exfil_risk: "PUT can bulk-update incident content and status"
+          # exfil_risk: PUT can overwrite incident details and escalation targets
           - allow: { method: PUT, path: /incidents/* }
-            exfil_risk: "PUT can overwrite incident details and escalation targets"
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/local/bin/python3 }

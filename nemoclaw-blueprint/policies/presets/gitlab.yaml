@@ -22,17 +22,17 @@ network_policies:
           - allow: { method: GET, path: /api/v4/users/* }
           - allow: { method: GET, path: /api/v4/issues }
           - allow: { method: GET, path: /api/v4/merge_requests }
+          # exfil_risk: GET search query parameters can encode and transmit data to GitLab
           - allow: { method: GET, path: /api/v4/search }
-            exfil_risk: "GET search query parameters can encode and transmit data to GitLab"
+          # exfil_risk: POST can write issue content to external GitLab repositories
           - allow: { method: POST, path: /api/v4/projects/*/issues }
-            exfil_risk: "POST can write issue content to external GitLab repositories"
+          # exfil_risk: POST can write merge request content to external GitLab repositories
           - allow: { method: POST, path: /api/v4/projects/*/merge_requests }
-            exfil_risk: "POST can write merge request content to external GitLab repositories"
+          # exfil_risk: POST can write comments to external GitLab issues
           - allow: { method: POST, path: /api/v4/projects/*/issues/*/notes }
-            exfil_risk: "POST can write comments to external GitLab issues"
+          # exfil_risk: PUT can overwrite issue content on external GitLab repositories
           - allow: { method: PUT, path: /api/v4/projects/*/issues/* }
-            exfil_risk: "PUT can overwrite issue content on external GitLab repositories"
+          # exfil_risk: PUT can overwrite merge request content on external GitLab repositories
           - allow: { method: PUT, path: /api/v4/projects/*/merge_requests/* }
-            exfil_risk: "PUT can overwrite merge request content on external GitLab repositories"
     binaries:
       - { path: /usr/local/bin/node }

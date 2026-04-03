@@ -23,12 +23,12 @@ network_policies:
           - allow: { method: GET, path: /api/annotations }
           - allow: { method: GET, path: /api/org }
           - allow: { method: GET, path: /api/search }
+          # exfil_risk: POST can write dashboard definitions with arbitrary queries to external Grafana
           - allow: { method: POST, path: /api/dashboards/db }
-            exfil_risk: "POST can write dashboard definitions with arbitrary queries to external Grafana"
+          # exfil_risk: POST can write arbitrary annotation content to Grafana dashboards
           - allow: { method: POST, path: /api/annotations }
-            exfil_risk: "POST can write arbitrary annotation content to Grafana dashboards"
+          # exfil_risk: PUT can redirect datasource connections to attacker-controlled endpoints
           - allow: { method: PUT, path: /api/datasources/* }
-            exfil_risk: "PUT can redirect datasource connections to attacker-controlled endpoints"
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/local/bin/python3 }

@@ -24,19 +24,19 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
+          # exfil_risk: GET exposes Confluence page metadata and content
           - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/pages }
-            exfil_risk: "GET exposes Confluence page metadata and content"
+          # exfil_risk: GET exposes full Confluence page content including attachments
           - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/pages/* }
-            exfil_risk: "GET exposes full Confluence page content including attachments"
           - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/spaces }
           - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/spaces/* }
+          # exfil_risk: GET search results expose Confluence page content matching arbitrary queries
           - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/search }
-            exfil_risk: "GET search results expose Confluence page content matching arbitrary queries"
           - allow: { method: GET, path: /ex/confluence/*/wiki/api/v2/labels }
+          # exfil_risk: POST can write wiki page content to external Confluence spaces
           - allow: { method: POST, path: /ex/confluence/*/wiki/api/v2/pages }
-            exfil_risk: "POST can write wiki page content to external Confluence spaces"
+          # exfil_risk: PUT can overwrite existing Confluence page content
           - allow: { method: PUT, path: /ex/confluence/*/wiki/api/v2/pages/* }
-            exfil_risk: "PUT can overwrite existing Confluence page content"
           - allow: { method: DELETE, path: /ex/confluence/*/wiki/api/v2/pages/* }
     binaries:
       - { path: /usr/local/bin/node }

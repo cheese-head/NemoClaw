@@ -16,29 +16,29 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
+          # exfil_risk: GET exposes full Notion page content
           - allow: { method: GET, path: /v1/pages/* }
-            exfil_risk: "GET exposes full Notion page content"
+          # exfil_risk: GET exposes Notion database structure and records
           - allow: { method: GET, path: /v1/databases/* }
-            exfil_risk: "GET exposes Notion database structure and records"
+          # exfil_risk: GET exposes Notion block content from any page
           - allow: { method: GET, path: /v1/blocks/* }
-            exfil_risk: "GET exposes Notion block content from any page"
           - allow: { method: GET, path: /v1/users }
           - allow: { method: GET, path: /v1/users/* }
+          # exfil_risk: POST search results expose Notion page and database content matching arbitrary queries
           - allow: { method: POST, path: /v1/search }
-            exfil_risk: "POST search results expose Notion page and database content matching arbitrary queries"
+          # exfil_risk: POST can create Notion pages with arbitrary content in any workspace
           - allow: { method: POST, path: /v1/pages }
-            exfil_risk: "POST can create Notion pages with arbitrary content in any workspace"
+          # exfil_risk: POST can create Notion databases in any workspace
           - allow: { method: POST, path: /v1/databases }
-            exfil_risk: "POST can create Notion databases in any workspace"
+          # exfil_risk: POST exposes all records from a Notion database
           - allow: { method: POST, path: /v1/databases/*/query }
-            exfil_risk: "POST exposes all records from a Notion database"
+          # exfil_risk: POST can append blocks with arbitrary content to any Notion page
           - allow: { method: POST, path: /v1/blocks/*/children }
-            exfil_risk: "POST can append blocks with arbitrary content to any Notion page"
+          # exfil_risk: PATCH can modify Notion page content and properties
           - allow: { method: PATCH, path: /v1/pages/* }
-            exfil_risk: "PATCH can modify Notion page content and properties"
+          # exfil_risk: PATCH can modify Notion block content
           - allow: { method: PATCH, path: /v1/blocks/* }
-            exfil_risk: "PATCH can modify Notion block content"
+          # exfil_risk: PATCH can modify Notion database structure and properties
           - allow: { method: PATCH, path: /v1/databases/* }
-            exfil_risk: "PATCH can modify Notion database structure and properties"
     binaries:
       - { path: /usr/local/bin/node }

@@ -40,11 +40,19 @@ function loadPreset(name) {
     console.error(`  Invalid preset name: ${name}`);
     return null;
   }
-  if (!fs.existsSync(file)) {
-    console.error(`  Preset not found: ${name}`);
-    return null;
+  if (fs.existsSync(file)) {
+    return fs.readFileSync(file, "utf-8");
   }
-  return fs.readFileSync(file, "utf-8");
+  // Filename doesn't match — scan all presets for a matching name: field.
+  if (fs.existsSync(PRESETS_DIR)) {
+    for (const f of fs.readdirSync(PRESETS_DIR).filter((x) => x.endsWith(".yaml"))) {
+      const content = fs.readFileSync(path.join(PRESETS_DIR, f), "utf-8");
+      const m = content.match(/^\s*name:\s*(.+)$/m);
+      if (m && m[1].trim() === name) return content;
+    }
+  }
+  console.error(`  Preset not found: ${name}`);
+  return null;
 }
 
 function getPresetEndpoints(content) {
@@ -216,6 +224,139 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
 
   return YAML.stringify(output);
 }
+/**
+ * Return a modified copy of preset YAML content with all write-method rules removed,
+ * keeping only GET, HEAD, and OPTIONS. Used when the user selects "read" mode in the wizard.
+ */
+/**
+ * Return all non-GET/HEAD/OPTIONS rules as { method, host, path } objects.
+ * Used in the wizard confirmation to show what write access each preset grants.
+ */
+function getWriteRules(presetContent) {
+  if (!presetContent) return [];
+  const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+  const results = [];
+  try {
+    const parsed = YAML.parse(presetContent);
+    const np = parsed?.network_policies;
+    if (!np || typeof np !== "object") return [];
+    for (const policy of Object.values(np)) {
+      if (!Array.isArray(policy.endpoints)) continue;
+      for (const ep of policy.endpoints) {
+        if (!Array.isArray(ep.rules)) continue;
+        for (const rule of ep.rules) {
+          if (!rule || typeof rule !== "object") continue;
+          const method = (rule.allow?.method || rule.deny?.method || "").toUpperCase();
+          if (method && !READ_METHODS.has(method)) {
+            results.push({ method, host: ep.host || "", path: rule.allow?.path || rule.deny?.path || "" });
+          }
+        }
+      }
+    }
+  } catch { /* ignore parse errors */ }
+  return results;
+}
+
+/**
+ * Return all endpoint hosts in a preset as { host, hasWrites }.
+ * Used by the wizard to build the per-endpoint configuration UI.
+ */
+function getEndpoints(presetContent) {
+  if (!presetContent) return [];
+  const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+  try {
+    const parsed = YAML.parse(presetContent);
+    const np = parsed?.network_policies;
+    if (!np || typeof np !== "object") return [];
+    const results = [];
+    for (const policy of Object.values(np)) {
+      if (!Array.isArray(policy.endpoints)) continue;
+      for (const ep of policy.endpoints) {
+        // access: full means unrestricted (no rules array) — treat as having writes.
+        const hasWrites = ep.access === "full" ||
+          (Array.isArray(ep.rules) && ep.rules.some((r) => {
+            const method = (r?.allow?.method || r?.deny?.method || "").toUpperCase();
+            return WRITE_METHODS.has(method);
+          }));
+        results.push({ host: ep.host || "", hasWrites });
+      }
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Apply a preset with per-endpoint settings:
+ *   endpointSettings: { [host]: { enabled: bool, readOnly: bool } }
+ * Disabled endpoints are dropped entirely; readOnly endpoints have write rules removed.
+ * Endpoints left with no rules after filtering are also dropped to pass policy validation.
+ */
+function applyPresetFiltered(sandboxName, presetContent, endpointSettings) {
+  if (!presetContent) throw new Error("Empty preset content");
+  const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+  let filteredContent;
+  try {
+    const parsed = YAML.parse(presetContent);
+    const np = parsed?.network_policies;
+    if (np && typeof np === "object") {
+      for (const policy of Object.values(np)) {
+        if (!Array.isArray(policy.endpoints)) continue;
+        policy.endpoints = policy.endpoints
+          .filter((ep) => endpointSettings[ep.host]?.enabled !== false)
+          .map((ep) => {
+            if (!endpointSettings[ep.host]?.readOnly || !Array.isArray(ep.rules)) return ep;
+            return {
+              ...ep,
+              rules: ep.rules.filter((r) => {
+                const method = (r?.allow?.method || r?.deny?.method || "").toUpperCase();
+                return !method || READ_METHODS.has(method);
+              }),
+            };
+          })
+          .filter((ep) => !Array.isArray(ep.rules) || ep.rules.length > 0);
+      }
+      filteredContent = YAML.stringify(parsed);
+    } else {
+      filteredContent = presetContent;
+    }
+  } catch {
+    filteredContent = presetContent;
+  }
+  return applyPresetFromContent(sandboxName, filteredContent);
+}
+
+function filterReadOnly(presetContent) {
+  if (!presetContent) return presetContent;
+  const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+  try {
+    const parsed = YAML.parse(presetContent);
+    if (!parsed || typeof parsed !== "object") return presetContent;
+    const np = parsed.network_policies;
+    if (!np || typeof np !== "object") return presetContent;
+    for (const policy of Object.values(np)) {
+      if (!Array.isArray(policy.endpoints)) continue;
+      policy.endpoints = policy.endpoints
+        .map((ep) => {
+          if (!Array.isArray(ep.rules)) return ep;
+          return {
+            ...ep,
+            rules: ep.rules.filter((rule) => {
+              if (!rule || typeof rule !== "object") return true;
+              const method = (rule.allow?.method || rule.deny?.method || "").toUpperCase();
+              return !method || READ_METHODS.has(method);
+            }),
+          };
+        })
+        .filter((ep) => !Array.isArray(ep.rules) || ep.rules.length > 0);
+    }
+    return YAML.stringify(parsed);
+  } catch {
+    return presetContent;
+  }
+}
+
 function applyPresetFromContent(sandboxName, content) {
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
   if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
@@ -330,6 +471,29 @@ function getAppliedPresets(sandboxName) {
   return sandbox ? sandbox.policies || [] : [];
 }
 
+/**
+ * Return the names of network_policies entries in the sandbox's current policy
+ * that were NOT applied by a known preset. These are custom/manually-managed policies.
+ */
+function getNonPresetPolicies(sandboxName) {
+  let rawPolicy = "";
+  try {
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  } catch { /* ignored */ }
+
+  const currentYaml = parseCurrentPolicy(rawPolicy);
+  if (!currentYaml) return [];
+
+  let parsed;
+  try { parsed = YAML.parse(currentYaml); } catch { return []; }
+
+  const np = parsed?.network_policies;
+  if (!np || typeof np !== "object" || Array.isArray(np)) return [];
+
+  const presetNames = new Set(listPresets().map((p) => p.name));
+  return Object.keys(np).filter((k) => !presetNames.has(k));
+}
+
 module.exports = {
   PRESETS_DIR,
   listPresets,
@@ -340,7 +504,12 @@ module.exports = {
   buildPolicySetCommand,
   buildPolicyGetCommand,
   mergePresetIntoPolicy,
+  getEndpoints,
+  getWriteRules,
+  filterReadOnly,
   applyPreset,
   applyPresetFromContent,
+  applyPresetFiltered,
   getAppliedPresets,
+  getNonPresetPolicies,
 };

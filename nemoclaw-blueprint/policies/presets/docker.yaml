@@ -16,8 +16,8 @@ network_policies:
         enforcement: enforce
         rules:
           - allow: { method: GET, path: "/**" }
+          # exfil_risk: POST can push container images containing arbitrary filesystem content to Docker Hub
           - allow: { method: POST, path: "/**" }
-            exfil_risk: "POST can push container images containing arbitrary filesystem content to Docker Hub"
       - host: auth.docker.io
         port: 443
         protocol: rest
@@ -32,8 +32,8 @@ network_policies:
         enforcement: enforce
         rules:
           - allow: { method: GET, path: "/**" }
+          # exfil_risk: POST can push container images containing arbitrary filesystem content to NVIDIA Container Registry
           - allow: { method: POST, path: "/**" }
-            exfil_risk: "POST can push container images containing arbitrary filesystem content to NVIDIA Container Registry"
       - host: authn.nvidia.com
         port: 443
         protocol: rest

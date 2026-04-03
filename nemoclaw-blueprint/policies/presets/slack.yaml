@@ -16,8 +16,8 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+          # exfil_risk: POST can deliver messages and files to external Slack workspaces
           - allow: { method: POST, path: "/**" }
-            exfil_risk: "POST can deliver messages and files to external Slack workspaces"
       - host: api.slack.com
         port: 443
         protocol: rest
@@ -25,8 +25,8 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+          # exfil_risk: POST can deliver messages, upload files, and trigger actions in external Slack workspaces
           - allow: { method: POST, path: "/**" }
-            exfil_risk: "POST can deliver messages, upload files, and trigger actions in external Slack workspaces"
       - host: hooks.slack.com
         port: 443
         protocol: rest
@@ -34,8 +34,8 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+          # exfil_risk: POST delivers webhook payloads to external Slack channels
           - allow: { method: POST, path: "/**" }
-            exfil_risk: "POST delivers webhook payloads to external Slack channels"
       # Socket Mode WebSocket — requires CONNECT tunnel to avoid
       # HTTP idle timeout killing the persistent connection. See #409.
       - host: wss-primary.slack.com

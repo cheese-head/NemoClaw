@@ -18,20 +18,20 @@ network_policies:
         rules:
           - allow: { method: GET, path: /v1/models }
           - allow: { method: GET, path: /v1/models/* }
+          # exfil_risk: POST sends prompt content to OpenAI — prompt injection could exfiltrate context data
           - allow: { method: POST, path: /v1/chat/completions }
-            exfil_risk: "POST sends prompt content to OpenAI — prompt injection could exfiltrate context data"
+          # exfil_risk: POST sends prompt content to OpenAI — prompt injection could exfiltrate context data
           - allow: { method: POST, path: /v1/completions }
-            exfil_risk: "POST sends prompt content to OpenAI — prompt injection could exfiltrate context data"
+          # exfil_risk: POST sends arbitrary text to OpenAI for embedding — can transmit sensitive data
           - allow: { method: POST, path: /v1/embeddings }
-            exfil_risk: "POST sends arbitrary text to OpenAI for embedding — can transmit sensitive data"
+          # exfil_risk: POST sends prompt text to OpenAI image generation
           - allow: { method: POST, path: /v1/images/generations }
-            exfil_risk: "POST sends prompt text to OpenAI image generation"
+          # exfil_risk: POST sends image data and prompts to OpenAI
           - allow: { method: POST, path: /v1/images/edits }
-            exfil_risk: "POST sends image data and prompts to OpenAI"
+          # exfil_risk: POST sends audio data to OpenAI for transcription
           - allow: { method: POST, path: /v1/audio/transcriptions }
-            exfil_risk: "POST sends audio data to OpenAI for transcription"
+          # exfil_risk: POST sends text content to OpenAI for speech synthesis
           - allow: { method: POST, path: /v1/audio/speech }
-            exfil_risk: "POST sends text content to OpenAI for speech synthesis"
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/local/bin/python3 }

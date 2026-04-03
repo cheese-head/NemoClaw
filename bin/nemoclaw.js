@@ -45,11 +45,13 @@ const { parseGatewayInference } = require("./lib/inference-config");
 const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
+const { wizard } = require("./lib/wizard");
 
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([
   "onboard",
+  "wizard",
   "list",
   "deploy",
   "setup",
@@ -1153,6 +1155,7 @@ function help() {
   ${D}Deploy more secure, always-on AI assistants with a single command.${R}
 
   ${G}Getting Started:${R}
+    ${B}nemoclaw wizard${R}                  Full-screen guided setup ${D}(recommended)${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
     nemoclaw setup-spark             Set up on DGX Spark ${D}(fixes cgroup v2 + Docker)${R}
 
@@ -1210,6 +1213,9 @@ const [cmd, ...args] = process.argv.slice(2);
     switch (cmd) {
       case "onboard":
         await onboard(args);
+        break;
+      case "wizard":
+        await wizard(args);
         break;
       case "setup":
         await setup(args);

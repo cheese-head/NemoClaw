@@ -16,7 +16,7 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/bot*/**" }
+          # exfil_risk: POST can send messages to arbitrary Telegram chats and channels
           - allow: { method: POST, path: "/bot*/**" }
-            exfil_risk: "POST can send messages to arbitrary Telegram chats and channels"
     binaries:
       - { path: /usr/local/bin/node }
