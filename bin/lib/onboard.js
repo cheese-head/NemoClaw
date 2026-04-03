@@ -3091,21 +3091,12 @@ async function _setupPolicies(sandboxName) {
       }
     }
   } else {
-    console.log("");
-    console.log("  Available policy presets:");
-    allPresets.forEach((p) => {
-      const marker = applied.includes(p.name) || suggestions.includes(p.name) ? "●" : "○";
-      const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
-      console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
-    });
-    console.log("");
-
-    const answer = await prompt(
-      `  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `,
-    );
-
-    if (answer.toLowerCase() === "n") {
-      console.log("  Skipping policy presets.");
+    const { selectAndMerge } = require("./policy-wizard-static");
+    let mergedYaml;
+    try {
+      mergedYaml = await selectAndMerge();
+    } catch (err) {
+      console.error(`  Policy selection cancelled or failed: ${err.message}`);
       return;
     }
 
@@ -3114,39 +3105,15 @@ async function _setupPolicies(sandboxName) {
       process.exit(1);
     }
 
-    if (answer.toLowerCase() === "list") {
-      // Let user pick
-      const picks = await prompt("  Enter preset names (comma-separated): ");
-      const selected = picks
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      for (const name of selected) {
-        try {
-          policies.applyPreset(sandboxName, name);
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-          }
-          throw err;
-        }
+    try {
+      policies.applyPresetFromContent(sandboxName, mergedYaml);
+    } catch (err) {
+      const message = err && err.message ? err.message : String(err);
+      if (message.includes("Unimplemented")) {
+        console.error("  OpenShell policy updates are not supported by this gateway build.");
+        console.error("  This is a known issue tracked in NemoClaw #536.");
       }
-    } else {
-      // Apply suggested
-      for (const name of suggestions) {
-        try {
-          policies.applyPreset(sandboxName, name);
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-          }
-          throw err;
-        }
-      }
+      throw err;
     }
   }
 
@@ -3251,47 +3218,32 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     return chosen;
   }
 
-  console.log("");
-  console.log("  Available policy presets:");
-  allPresets.forEach((p) => {
-    const marker = applied.includes(p.name) ? "●" : "○";
-    const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
-    console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
-  });
-  console.log("");
-
-  const answer = await prompt(
-    `  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `,
-  );
-
-  if (answer.toLowerCase() === "n") {
-    console.log("  Skipping policy presets.");
+  const { selectAndMerge } = require("./policy-wizard-static");
+  let mergedYaml;
+  try {
+    mergedYaml = await selectAndMerge();
+  } catch (err) {
+    console.error(`  Policy selection cancelled or failed: ${err.message}`);
     return [];
   }
 
-  let interactiveChoice = suggestions;
-  if (answer.toLowerCase() === "list") {
-    const custom = await prompt("  Enter preset names (comma-separated): ");
-    interactiveChoice = parsePolicyPresetEnv(custom);
-  }
-
-  const knownPresets = new Set(allPresets.map((p) => p.name));
-  const invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
-  if (invalidPresets.length > 0) {
-    console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
-    process.exit(1);
-  }
-
-  if (onSelection) onSelection(interactiveChoice);
+  if (onSelection) onSelection(["custom"]);
   if (!waitForSandboxReady(sandboxName)) {
     console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
     process.exit(1);
   }
 
-  for (const name of interactiveChoice) {
-    policies.applyPreset(sandboxName, name);
+  try {
+    policies.applyPresetFromContent(sandboxName, mergedYaml);
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    if (message.includes("Unimplemented")) {
+      console.error("  OpenShell policy updates are not supported by this gateway build.");
+      console.error("  This is a known issue tracked in NemoClaw #536.");
+    }
+    throw err;
   }
-  return interactiveChoice;
+  return ["custom"];
 }
 
 // ── Dashboard ────────────────────────────────────────────────────

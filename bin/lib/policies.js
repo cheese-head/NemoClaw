@@ -216,6 +216,28 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
 
   return YAML.stringify(output);
 }
+function applyPresetFromContent(sandboxName, content) {
+  const presetEntries = extractPresetEntries(content);
+  if (!presetEntries) throw new Error("Provided policy content has no network_policies section.");
+
+  let rawPolicy = "";
+  try {
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  } catch { /* ignored */ }
+
+  const merged  = mergePresetIntoPolicy(parseCurrentPolicy(rawPolicy), presetEntries);
+  const tmpDir  = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+  const tmpFile = path.join(tmpDir, "policy.yaml");
+  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
+
+  try {
+    run(buildPolicySetCommand(tmpFile, sandboxName));
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch { /* ignored */ }
+    try { fs.rmdirSync(tmpDir);   } catch { /* ignored */ }
+  }
+}
+
 function applyPreset(sandboxName, presetName) {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
@@ -299,5 +321,6 @@ module.exports = {
   buildPolicyGetCommand,
   mergePresetIntoPolicy,
   applyPreset,
+  applyPresetFromContent,
   getAppliedPresets,
 };
