@@ -3177,14 +3177,17 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
   if (!process.stdin.isTTY) {
     console.log("");
     console.log("  Available policy presets:");
-    allPresets.forEach((p, i) => {
+    allPresets.forEach((p) => {
       const marker = selected.has(p.name) ? "[\x1b[32m✓\x1b[0m]" : "[ ]";
       console.log(`    ${marker} ${p.name.padEnd(14)} — ${p.description}`);
     });
     console.log("");
     const raw = await prompt("  Select presets (comma-separated names, Enter to skip): ");
     if (!raw.trim()) return [];
-    return raw.split(",").map((s) => s.trim()).filter((name) => allPresets.some((p) => p.name === name));
+    return raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((name) => allPresets.some((p) => p.name === name));
   }
 
   // ── Raw-mode TUI ─────────────────────────────────────────────────
@@ -3267,7 +3270,8 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const suggestions = ["pypi", "npm"];
   if (getCredential("TELEGRAM_BOT_TOKEN")) suggestions.push("telegram");
   if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
-  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN) suggestions.push("discord");
+  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN)
+    suggestions.push("discord");
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
