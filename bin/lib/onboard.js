@@ -3264,9 +3264,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 
   step(7, 7, "Policy presets");
 
-  // Use t2 preset YAMLs as the baseline for all users
-  const selectedTier = "t2";
-  const allPresets = policies.listTierPresets(selectedTier);
+  const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
   let chosen = selectedPresets;
 
@@ -3279,7 +3277,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     note(`  [resume] Reapplying policy presets: ${chosen.join(", ")}`);
     for (const name of chosen) {
       if (applied.includes(name)) continue;
-      policies.applyPreset(sandboxName, name, selectedTier);
+      policies.applyPreset(sandboxName, name);
     }
     return chosen;
   }
