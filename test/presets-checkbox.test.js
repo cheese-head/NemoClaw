@@ -32,7 +32,10 @@ function parseResult(stdout) {
  * `promptResponse` is what the stubbed prompt() returns — i.e., whatever the
  * user would have typed at the "Select presets" prompt.
  */
-function runCheckboxSelector(promptResponse, { presets = SAMPLE_PRESETS, initialSelected = [] } = {}) {
+function runCheckboxSelector(
+  promptResponse,
+  { presets = SAMPLE_PRESETS, initialSelected = [] } = {},
+) {
   // Stub credentials.prompt BEFORE requiring onboard so the destructured
   // binding inside onboard.js picks up the stub at load time.
   const script = String.raw`

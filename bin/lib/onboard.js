@@ -3358,7 +3358,10 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
     }
     const knownNames = new Set(allPresets.map((p) => p.name));
     const chosen = [];
-    for (const name of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+    for (const name of raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       if (knownNames.has(name)) {
         chosen.push(name);
       } else {
