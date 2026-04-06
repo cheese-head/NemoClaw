@@ -40,15 +40,19 @@ The current generated skills and their source pages are:
 |---|---|
 | `nemoclaw-overview` | `docs/about/overview.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
 | `nemoclaw-get-started` | `docs/get-started/quickstart.md` |
-| `nemoclaw-configure-inference` | `docs/inference/switch-inference-providers.md` |
+| `nemoclaw-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md` |
 | `nemoclaw-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
 | `nemoclaw-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
 | `nemoclaw-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/set-up-telegram-bridge.md` |
-| `nemoclaw-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/inference-profiles.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
+| `nemoclaw-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
 
 ### Regenerating skills after doc changes
 
-After changing any page in `docs/`, regenerate the skills from the repo root:
+A pre-commit hook regenerates skills automatically whenever you commit changes to `docs/**/*.md` files.
+The hook runs `scripts/docs-to-skills.py` and stages the updated skills so they are included in the same commit.
+No manual step is needed for normal workflows.
+
+To regenerate skills manually (for example, after rebasing or outside of a commit), run from the repo root:
 
 ```bash
 python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
