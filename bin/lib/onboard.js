@@ -3173,21 +3173,38 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
   const selected = new Set(initialSelected);
   const n = allPresets.length;
 
-  // ── Fallback: non-TTY (piped input) ──────────────────────────────
-  if (!process.stdin.isTTY) {
+  // ── Zero-presets guard ────────────────────────────────────────────
+  if (n === 0) {
+    console.log("  No policy presets are available.");
+    return [];
+  }
+
+  const GREEN_CHECK = USE_COLOR ? "[\x1b[32m✓\x1b[0m]" : "[✓]";
+
+  // ── Fallback: non-TTY or redirected stdout (piped input) ──────────
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.log("");
     console.log("  Available policy presets:");
     allPresets.forEach((p) => {
-      const marker = selected.has(p.name) ? "[\x1b[32m✓\x1b[0m]" : "[ ]";
+      const marker = selected.has(p.name) ? GREEN_CHECK : "[ ]";
       console.log(`    ${marker} ${p.name.padEnd(14)} — ${p.description}`);
     });
     console.log("");
     const raw = await prompt("  Select presets (comma-separated names, Enter to skip): ");
-    if (!raw.trim()) return [];
-    return raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter((name) => allPresets.some((p) => p.name === name));
+    if (!raw.trim()) {
+      console.log("  Skipping policy presets.");
+      return [];
+    }
+    const knownNames = new Set(allPresets.map((p) => p.name));
+    const chosen = [];
+    for (const name of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+      if (knownNames.has(name)) {
+        chosen.push(name);
+      } else {
+        console.error(`  Unknown preset name ignored: ${name}`);
+      }
+    }
+    return chosen;
   }
 
   // ── Raw-mode TUI ─────────────────────────────────────────────────
@@ -3198,7 +3215,7 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
   const renderLines = () => {
     const lines = ["  Available policy presets:"];
     allPresets.forEach((p, i) => {
-      const check = selected.has(p.name) ? "[\x1b[32m✓\x1b[0m]" : "[ ]";
+      const check = selected.has(p.name) ? GREEN_CHECK : "[ ]";
       const arrow = i === cursor ? ">" : " ";
       lines.push(`   ${arrow} ${check} ${p.name.padEnd(14)} — ${p.description}`);
     });
@@ -3228,10 +3245,17 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
     const cleanup = () => {
       process.stdin.setRawMode(false);
       process.stdin.pause();
-      process.stdin.removeAllListeners("data");
+      process.stdin.removeListener("data", onData);
+      process.removeListener("SIGTERM", onSigterm);
     };
 
-    process.stdin.on("data", (key) => {
+    const onSigterm = () => {
+      cleanup();
+      process.exit(1);
+    };
+    process.once("SIGTERM", onSigterm);
+
+    const onData = (key) => {
       if (key === "\r" || key === "\n") {
         cleanup();
         process.stdout.write("\n");
@@ -3256,7 +3280,9 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
         else for (const p of allPresets) selected.add(p.name);
         redraw();
       }
-    });
+    };
+
+    process.stdin.on("data", onData);
   });
 }
 
@@ -3365,8 +3391,25 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     process.exit(1);
   }
 
-  for (const name of interactiveChoice) {
-    policies.applyPreset(sandboxName, name);
+  const newlySelected = interactiveChoice.filter((name) => !applied.includes(name));
+  for (const name of newlySelected) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        policies.applyPreset(sandboxName, name);
+        break;
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        if (message.includes("Unimplemented")) {
+          console.error("  OpenShell policy updates are not supported by this gateway build.");
+          console.error("  This is a known issue tracked in NemoClaw #536.");
+          throw err;
+        }
+        if (!message.includes("sandbox not found") || attempt === 2) {
+          throw err;
+        }
+        sleep(2);
+      }
+    }
   }
   return interactiveChoice;
 }
@@ -3865,6 +3908,7 @@ module.exports = {
   isInferenceRouteReady,
   isOpenclawReady,
   arePolicyPresetsApplied,
+  presetsCheckboxSelector,
   setupPoliciesWithSelection,
   hydrateCredentialEnv,
   shouldIncludeBuildContextPath,
