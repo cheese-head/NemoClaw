@@ -14,6 +14,7 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[];
+  policyTier?: string | null;
 }
 
 export interface SandboxRegistry {

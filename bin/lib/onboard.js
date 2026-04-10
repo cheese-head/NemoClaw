@@ -52,6 +52,8 @@ module.exports = {
   isOpenclawReady: mod.isOpenclawReady,
   arePolicyPresetsApplied: mod.arePolicyPresetsApplied,
   presetsCheckboxSelector: mod.presetsCheckboxSelector,
+  selectPolicyTier: mod.selectPolicyTier,
+  selectTierPresetsAndAccess: mod.selectTierPresetsAndAccess,
   setupPoliciesWithSelection: mod.setupPoliciesWithSelection,
   summarizeCurlFailure: mod.summarizeCurlFailure,
   summarizeProbeFailure: mod.summarizeProbeFailure,
