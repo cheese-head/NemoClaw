@@ -43,10 +43,10 @@ function runScript(scriptBody) {
  * before the require so non-interactive paths read the right values.
  */
 function buildPreamble({ tierEnv = "balanced", policyMode = "skip", policyPresets = "" } = {}) {
-  const credPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-  const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-  const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-  const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 
   return String.raw`
 const credentials = require(${credPath});
@@ -93,7 +93,7 @@ console.log = () => {};
   });
 
   it("restricted tier produces an empty preset list", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "restricted" }) +
       String.raw`
@@ -113,7 +113,7 @@ console.log = () => {};
   });
 
   it("balanced tier resolves presets all with read-write access", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
       String.raw`
@@ -136,7 +136,7 @@ console.log = () => {};
   });
 
   it("open tier resolves presets including at least one social/messaging preset", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "open" }) +
       String.raw`
@@ -162,7 +162,7 @@ console.log = () => {};
   });
 
   it("a preset can be deselected via selected option in resolveTierPresets", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
       String.raw`
@@ -182,7 +182,7 @@ console.log = () => {};
   });
 
   it("access level can be restricted from read-write to read via override", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
       String.raw`
@@ -233,7 +233,7 @@ console.log = (...args) => lines.push(args.join(" "));
   });
 
   it("selected tier is persisted to the registry via updateSandbox({ policyTier })", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "policies.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
     const script =
       buildPreamble({ tierEnv: "open", policyMode: "skip" }) +
       String.raw`
@@ -273,14 +273,14 @@ console.log = (...args) => lines.push(args.join(" "));
 });
 
 describe("selectTierPresetsAndAccess", () => {
-  const tiersPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "tiers.js"));
-  const policiesPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "policies.js"));
+  const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
+  const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
 
   function buildPresetsScript(body) {
-    const credPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     return String.raw`
 const credentials = require(${credPath});
 const runner = require(${runnerPath});

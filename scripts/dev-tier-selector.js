@@ -1,3 +1,4 @@
+// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -18,9 +19,9 @@
 const readline = require("readline");
 
 // ── Stubs ──────────────────────────────────────────────────────────────────
-const creds = require("../bin/lib/credentials.js");
-const runner = require("../bin/lib/runner.js");
-const registry = require("../bin/lib/registry.js");
+const creds = require("../dist/lib/credentials.js");
+const runner = require("../dist/lib/runner.js");
+const registry = require("../dist/lib/registry.js");
 
 creds.ensureApiKey = async () => {};
 creds.getCredential = () => null;
@@ -41,8 +42,8 @@ registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 
 // ── Run ────────────────────────────────────────────────────────────────────
-const { selectPolicyTier, selectTierPresetsAndAccess } = require("../bin/lib/onboard.js");
-const policies = require("../bin/lib/policies.js");
+const { selectPolicyTier, selectTierPresetsAndAccess } = require("../dist/lib/onboard.js");
+const policies = require("../dist/lib/policies.js");
 
 (async () => {
   const tier = await selectPolicyTier();

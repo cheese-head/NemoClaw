@@ -11,8 +11,8 @@
 //   - Integration with the existing policies module
 
 import { describe, it, expect } from "vitest";
-import tiers from "../bin/lib/tiers";
-import policies from "../bin/lib/policies";
+import tiers from "../dist/lib/tiers";
+import policies from "../dist/lib/policies";
 
 describe("tiers", () => {
   describe("listTiers", () => {
