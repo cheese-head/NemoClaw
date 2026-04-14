@@ -467,8 +467,9 @@ function getOpenshellBinary() {
   return OPENSHELL_BIN;
 }
 
-function openshellShellCommand(args) {
-  return [shellQuote(getOpenshellBinary()), ...args.map((arg) => shellQuote(arg))].join(" ");
+function openshellShellCommand(args, options = {}) {
+  const openshellBinary = options.openshellBinary || getOpenshellBinary();
+  return [shellQuote(openshellBinary), ...args.map((arg) => shellQuote(arg))].join(" ");
 }
 
 function runOpenshell(args, opts = {}) {
@@ -566,9 +567,30 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
     console.log(
       `  ${label} authorization failed. Re-enter the API key or choose a different provider/model.`,
     );
-    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: ", { secret: true }))
+    console.log("  ⚠️  Do NOT paste your API key here — use the options below:");
+    const choice = (
+      await prompt("  Options: retry (re-enter key), back (change provider), exit [retry]: ", {
+        secret: true,
+      })
+    )
       .trim()
       .toLowerCase();
+    // Guard against the user accidentally pasting an API key at this prompt.
+    // Tokens don't contain spaces; human sentences do — the no-space + length check
+    // avoids false-positives on long typed sentences.
+    const API_KEY_PREFIXES = ["nvapi-", "ghp_", "gcm-", "sk-", "gpt-", "gemini-", "nvcf-"];
+    const looksLikeToken =
+      API_KEY_PREFIXES.some((p) => choice.startsWith(p)) ||
+      (!choice.includes(" ") && choice.length > 40) ||
+      // Regex fallback: base64-safe token pattern (20+ chars, no spaces, mixed alphanum)
+      /^[A-Za-z0-9_\-\.]{20,}$/.test(choice);
+    const validator = credentialEnv === "NVIDIA_API_KEY" ? validateNvidiaApiKeyValue : null;
+    if (looksLikeToken) {
+      console.log("  ⚠️  That looks like an API key — do not paste credentials here.");
+      console.log("  Treating as 'retry'. You will be prompted to enter the key securely.");
+      await replaceNamedCredential(credentialEnv, `${label} API key`, helpUrl, validator);
+      return "credential";
+    }
     if (choice === "back") {
       console.log("  Returning to provider selection.");
       console.log("");
@@ -578,7 +600,6 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
       exitOnboardFromPrompt();
     }
     if (choice === "" || choice === "retry") {
-      const validator = credentialEnv === "NVIDIA_API_KEY" ? validateNvidiaApiKeyValue : null;
       await replaceNamedCredential(credentialEnv, `${label} API key`, helpUrl, validator);
       return "credential";
     }
@@ -4601,8 +4622,8 @@ const CONTROL_UI_PORT = DASHBOARD_PORT;
 const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
-  const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
-  const portToStop = String(new URL(chatUiUrl).port || CONTROL_UI_PORT);
+  const portToStop = getDashboardForwardPort(chatUiUrl);
+  const forwardTarget = getDashboardForwardTarget(chatUiUrl);
   runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
@@ -4659,6 +4680,92 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
 
 // buildControlUiUrls — see dashboard import above
 
+function getDashboardForwardPort(
+  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+) {
+  const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
+  return forwardTarget.includes(":") ? (forwardTarget.split(":").pop() ?? String(CONTROL_UI_PORT)) : forwardTarget;
+}
+
+function getDashboardForwardTarget(
+  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+  options = {},
+) {
+  const port = getDashboardForwardPort(chatUiUrl);
+  return isWsl(options) ? `0.0.0.0:${port}` : resolveDashboardForwardTarget(chatUiUrl);
+}
+
+function getDashboardForwardStartCommand(sandboxName, options = {}) {
+  const chatUiUrl = options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const forwardTarget = getDashboardForwardTarget(chatUiUrl, options);
+  return `${openshellShellCommand(
+    ["forward", "start", "--background", forwardTarget, sandboxName],
+    options,
+  )}`;
+}
+
+function buildAuthenticatedDashboardUrl(baseUrl, token = null) {
+  if (!token) return baseUrl;
+  return `${baseUrl}#token=${encodeURIComponent(token)}`;
+}
+
+function getWslHostAddress(options = {}) {
+  if (options.wslHostAddress) {
+    return options.wslHostAddress;
+  }
+  if (!isWsl(options)) {
+    return null;
+  }
+  const runCaptureFn = options.runCapture || runCapture;
+  const output = runCaptureFn("hostname -I 2>/dev/null", { ignoreError: true });
+  const candidates = String(output || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  return candidates[0] || null;
+}
+
+function getDashboardAccessInfo(sandboxName, options = {}) {
+  const token = Object.prototype.hasOwnProperty.call(options, "token")
+    ? options.token
+    : fetchGatewayAuthTokenFromSandbox(sandboxName);
+  const chatUiUrl = options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const dashboardPort = Number(getDashboardForwardPort(chatUiUrl));
+  const dashboardAccess = buildControlUiUrls(token, dashboardPort).map((url, index) => ({
+    label: index === 0 ? "Dashboard" : `Alt ${index}`,
+    url: buildAuthenticatedDashboardUrl(url, null),
+  }));
+
+  const wslHostAddress = getWslHostAddress(options);
+  if (wslHostAddress) {
+    const wslUrl = buildAuthenticatedDashboardUrl(
+      `http://${wslHostAddress}:${dashboardPort}/`,
+      token,
+    );
+    if (!dashboardAccess.some((access) => access.url === wslUrl)) {
+      dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
+    }
+  }
+
+  return dashboardAccess;
+}
+
+function getDashboardGuidanceLines(dashboardAccess = [], options = {}) {
+  const dashboardPort = getDashboardForwardPort(
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+  );
+  const guidance = [`Port ${dashboardPort} must be forwarded before opening these URLs.`];
+  if (isWsl(options)) {
+    guidance.push(
+      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
+    );
+  }
+  if (dashboardAccess.length === 0) {
+    guidance.push("No dashboard URLs were generated.");
+  }
+  return guidance;
+}
+
 function printDashboard(sandboxName, model, provider, nimContainer = null, agent = null) {
   const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
@@ -4675,6 +4782,8 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
   const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+  const dashboardAccess = getDashboardAccessInfo(sandboxName, { token });
+  const guidanceLines = getDashboardGuidanceLines(dashboardAccess);
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
@@ -4688,19 +4797,39 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
   console.log("");
   if (agent) {
-    agentOnboard.printDashboardUi(sandboxName, token, agent, { note, buildControlUiUrls });
+    agentOnboard.printDashboardUi(sandboxName, token, agent, {
+      note,
+      buildControlUiUrls: (tokenValue, port) => {
+        const urls = buildControlUiUrls(tokenValue, port);
+        const wslHostAddress = getWslHostAddress();
+        if (wslHostAddress) {
+          const wslUrl = buildAuthenticatedDashboardUrl(
+            `http://${wslHostAddress}:${port}/`,
+            tokenValue,
+          );
+          if (!urls.includes(wslUrl)) {
+            urls.push(wslUrl);
+          }
+        }
+        return urls;
+      },
+    });
   } else if (token) {
     console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
-    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
-    for (const url of buildControlUiUrls(token)) {
-      console.log(`  ${url}`);
+    for (const line of guidanceLines) {
+      console.log(`  ${line}`);
+    }
+    for (const entry of dashboardAccess) {
+      console.log(`  ${entry.label}: ${entry.url}`);
     }
   } else {
     note("  Could not read gateway token from the sandbox (download failed).");
     console.log("  OpenClaw UI");
-    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
-    for (const url of buildControlUiUrls()) {
-      console.log(`  ${url}`);
+    for (const line of guidanceLines) {
+      console.log(`  ${line}`);
+    }
+    for (const entry of dashboardAccess) {
+      console.log(`  ${entry.label}: ${entry.url}`);
     }
     console.log(
       `  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
@@ -5226,6 +5355,11 @@ module.exports = {
   repairRecordedSandbox,
   recoverGatewayRuntime,
   resolveDashboardForwardTarget,
+  buildAuthenticatedDashboardUrl,
+  getDashboardAccessInfo,
+  getDashboardForwardPort,
+  getDashboardForwardStartCommand,
+  getDashboardGuidanceLines,
   startGatewayForRecovery,
   runCaptureOpenshell,
   setupInference,

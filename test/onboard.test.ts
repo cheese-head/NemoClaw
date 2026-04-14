@@ -16,6 +16,8 @@ import {
   classifySandboxCreateFailure,
   compactText,
   formatEnvAssignment,
+  getDashboardAccessInfo,
+  getDashboardForwardStartCommand,
   getNavigationChoice,
   getGatewayReuseState,
   getPortConflictServiceHints,
@@ -380,6 +382,38 @@ describe("onboard helpers", () => {
     expect(resolveDashboardForwardTarget("http://[::1]:18789")).toBe("18789");
     expect(resolveDashboardForwardTarget("https://chat.example.com")).toBe("0.0.0.0:18789");
     expect(resolveDashboardForwardTarget("http://10.0.0.25:18789")).toBe("0.0.0.0:18789");
+  });
+
+  it("includes a VS Code/WSL dashboard URL when running under WSL", () => {
+    const access = getDashboardAccessInfo("the-crucible", {
+      token: "secret-token",
+      chatUiUrl: "http://127.0.0.1:19999",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+      runCapture: (command) => (command.includes("hostname -I") ? "172.24.240.1\n" : ""),
+    });
+
+    expect(access).toEqual([
+      { label: "Dashboard", url: "http://127.0.0.1:19999/#token=secret-token" },
+      { label: "VS Code/WSL", url: "http://172.24.240.1:19999/#token=secret-token" },
+    ]);
+  });
+
+  it("binds the dashboard forward to all interfaces under WSL", () => {
+    const command = getDashboardForwardStartCommand("the-crucible", {
+      chatUiUrl: "http://127.0.0.1:19999",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      openshellBinary: "/usr/bin/openshell",
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+    });
+
+    expect(command).toContain("forward");
+    expect(command).toContain("start");
+    expect(command).toContain("--background");
+    expect(command).toContain("0.0.0.0:19999");
+    expect(command).toContain("the-crucible");
   });
 
   it("prints platform-appropriate service hints for port conflicts", () => {
@@ -2123,10 +2157,14 @@ const { createSandbox } = require(${onboardPath});
     assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
     assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
     assert.ok(
-      payload.commands.some((entry) =>
-        entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'"),
+      payload.commands.some(
+        (entry) =>
+          entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'") ||
+          entry.command.includes(
+            "'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'",
+          ),
       ),
-      "expected default loopback dashboard forward",
+      "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );
   });
 

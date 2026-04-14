@@ -876,7 +876,6 @@ function uninstall(args) {
     remoteScriptUrl: REMOTE_UNINSTALL_URL,
     env: process.env,
     spawnSyncImpl: spawnSync,
-    execFileSyncImpl: execFileSync,
     log: console.log,
     error: console.error,
     exit: (code) => process.exit(code),
@@ -1499,7 +1498,7 @@ function help() {
     nemoclaw credentials reset <KEY> Remove a stored credential so onboard re-prompts
 
   Cleanup:
-    nemoclaw uninstall [flags]       Run uninstall.sh (local first, curl fallback)
+    nemoclaw uninstall [flags]       Run uninstall.sh (local only; no remote fallback)
 
   ${G}Uninstall flags:${R}
     --yes                            Skip the confirmation prompt
