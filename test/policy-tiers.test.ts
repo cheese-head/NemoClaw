@@ -14,6 +14,22 @@ import { describe, it, expect } from "vitest";
 import tiers from "../dist/lib/tiers";
 import policies from "../dist/lib/policies";
 
+interface TierPreset {
+  name: string;
+  access: string;
+}
+
+interface Tier {
+  name: string;
+  label: string;
+  description: string;
+  presets: TierPreset[];
+}
+
+interface Preset {
+  name: string;
+}
+
 describe("tiers", () => {
   describe("listTiers", () => {
     it("returns exactly 3 tiers", () => {
@@ -21,7 +37,7 @@ describe("tiers", () => {
     });
 
     it("tiers are ordered restricted → balanced → open", () => {
-      const names = tiers.listTiers().map((t) => t.name);
+      const names = tiers.listTiers().map((t: Tier) => t.name);
       expect(names).toEqual(["restricted", "balanced", "open"]);
     });
 
@@ -35,7 +51,7 @@ describe("tiers", () => {
     });
 
     it("labels are human-readable capitalised strings", () => {
-      const labels = tiers.listTiers().map((t) => t.label);
+      const labels = tiers.listTiers().map((t: Tier) => t.label);
       expect(labels).toEqual(["Restricted", "Balanced", "Open"]);
     });
   });
@@ -72,7 +88,7 @@ describe("tiers", () => {
 
   describe("tier: balanced", () => {
     it("includes npm, pypi, huggingface, brew, and brave", () => {
-      const names = tiers.getTier("balanced").presets.map((p) => p.name);
+      const names = tiers.getTier("balanced").presets.map((p: TierPreset) => p.name);
       expect(names).toContain("npm");
       expect(names).toContain("pypi");
       expect(names).toContain("huggingface");
@@ -91,7 +107,7 @@ describe("tiers", () => {
     });
 
     it("does not include messaging presets (slack, discord, telegram)", () => {
-      const names = tiers.getTier("balanced").presets.map((p) => p.name);
+      const names = tiers.getTier("balanced").presets.map((p: TierPreset) => p.name);
       expect(names).not.toContain("slack");
       expect(names).not.toContain("discord");
       expect(names).not.toContain("telegram");
@@ -112,21 +128,21 @@ describe("tiers", () => {
     });
 
     it("includes messaging presets (slack, discord, telegram)", () => {
-      const names = tiers.getTier("open").presets.map((p) => p.name);
+      const names = tiers.getTier("open").presets.map((p: TierPreset) => p.name);
       expect(names).toContain("slack");
       expect(names).toContain("discord");
       expect(names).toContain("telegram");
     });
 
     it("includes productivity presets (jira, outlook)", () => {
-      const names = tiers.getTier("open").presets.map((p) => p.name);
+      const names = tiers.getTier("open").presets.map((p: TierPreset) => p.name);
       expect(names).toContain("jira");
       expect(names).toContain("outlook");
     });
 
     it("open tier contains all balanced presets by name", () => {
-      const balancedNames = new Set(tiers.getTier("balanced").presets.map((p) => p.name));
-      const openNames = new Set(tiers.getTier("open").presets.map((p) => p.name));
+      const balancedNames = new Set(tiers.getTier("balanced").presets.map((p: TierPreset) => p.name));
+      const openNames = new Set(tiers.getTier("open").presets.map((p: TierPreset) => p.name));
       for (const name of balancedNames) {
         expect(openNames.has(name)).toBe(true);
       }
@@ -135,7 +151,7 @@ describe("tiers", () => {
 
   describe("resolveTierPresets", () => {
     it("returns default presets for balanced with no overrides", () => {
-      const resolved = tiers.resolveTierPresets("balanced");
+      const resolved: TierPreset[] = tiers.resolveTierPresets("balanced");
       expect(resolved.length).toBeGreaterThanOrEqual(5);
       for (const p of resolved) {
         expect(p.access).toBe("read-write");
@@ -143,28 +159,28 @@ describe("tiers", () => {
     });
 
     it("applies access override for a specific preset", () => {
-      const resolved = tiers.resolveTierPresets("balanced", {
+      const resolved: TierPreset[] = tiers.resolveTierPresets("balanced", {
         overrides: { npm: "read" },
       });
-      const npm = resolved.find((p) => p.name === "npm");
-      expect(npm.access).toBe("read");
+      const npm = resolved.find((p: TierPreset) => p.name === "npm");
+      expect(npm!.access).toBe("read");
       // other presets unchanged
-      const pypi = resolved.find((p) => p.name === "pypi");
-      expect(pypi.access).toBe("read-write");
+      const pypi = resolved.find((p: TierPreset) => p.name === "pypi");
+      expect(pypi!.access).toBe("read-write");
     });
 
     it("restricts to selected presets when selected list is provided", () => {
-      const resolved = tiers.resolveTierPresets("balanced", {
+      const resolved: TierPreset[] = tiers.resolveTierPresets("balanced", {
         selected: ["npm", "pypi"],
       });
       expect(resolved).toHaveLength(2);
-      const names = resolved.map((p) => p.name);
+      const names = resolved.map((p: TierPreset) => p.name);
       expect(names).toContain("npm");
       expect(names).toContain("pypi");
     });
 
     it("applies overrides and selection together", () => {
-      const resolved = tiers.resolveTierPresets("balanced", {
+      const resolved: TierPreset[] = tiers.resolveTierPresets("balanced", {
         overrides: { npm: "read" },
         selected: ["npm"],
       });
@@ -182,21 +198,21 @@ describe("tiers", () => {
     });
 
     it("selected list with no matches returns empty array", () => {
-      const resolved = tiers.resolveTierPresets("balanced", {
+      const resolved: TierPreset[] = tiers.resolveTierPresets("balanced", {
         selected: ["nonexistent-preset"],
       });
       expect(resolved).toHaveLength(0);
     });
 
     it("null selected is treated as no filter (all presets returned)", () => {
-      const all = tiers.resolveTierPresets("balanced");
-      const withNull = tiers.resolveTierPresets("balanced", { selected: null });
+      const all: TierPreset[] = tiers.resolveTierPresets("balanced");
+      const withNull: TierPreset[] = tiers.resolveTierPresets("balanced", { selected: null });
       expect(withNull).toHaveLength(all.length);
     });
 
     it("open tier resolve returns all open presets", () => {
       const openTier = tiers.getTier("open");
-      const resolved = tiers.resolveTierPresets("open");
+      const resolved: TierPreset[] = tiers.resolveTierPresets("open");
       expect(resolved).toHaveLength(openTier.presets.length);
     });
 
@@ -213,7 +229,7 @@ describe("tiers", () => {
 
   describe("integration: all tier presets exist on disk", () => {
     it("every preset referenced in tiers.yaml exists as a preset file", () => {
-      const available = new Set(policies.listPresets().map((p) => p.name));
+      const available = new Set(policies.listPresets().map((p: Preset) => p.name));
       for (const tier of tiers.listTiers()) {
         for (const preset of tier.presets) {
           expect(

@@ -5,7 +5,7 @@
 // Verifies that selectPolicyTier and setupPoliciesWithSelection wire correctly.
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,7 +17,7 @@ const repoRoot = path.join(import.meta.dirname, "..");
  * Run a small inline Node script that mocks out the minimal dependencies of
  * onboard.js, calls the given async expression, and prints a JSON payload.
  */
-function runScript(scriptBody) {
+function runScript(scriptBody: string): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tier-onboard-"));
   const scriptPath = path.join(tmpDir, "script.js");
   fs.writeFileSync(scriptPath, scriptBody);
@@ -42,7 +42,7 @@ function runScript(scriptBody) {
  * Sets NEMOCLAW_POLICY_TIER, NEMOCLAW_POLICY_MODE, and NEMOCLAW_POLICY_PRESETS
  * before the require so non-interactive paths read the right values.
  */
-function buildPreamble({ tierEnv = "balanced", policyMode = "skip", policyPresets = "" } = {}) {
+function buildPreamble({ tierEnv = "balanced", policyMode = "skip", policyPresets = "" } = {}): string {
   const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
   const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
@@ -152,7 +152,7 @@ console.log = () => {};
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.tier, "open");
-    const names = payload.presets.map((p) => p.name);
+    const names: string[] = payload.presets.map((p: { name: string }) => p.name);
     const social = ["slack", "discord", "telegram"];
     const hasSocial = social.some((n) => names.includes(n));
     assert.ok(
@@ -178,7 +178,7 @@ console.log = () => {};
     const result = runScript(script);
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.resolved.map((p) => p.name).includes("npm"), "npm should be deselected");
+    assert.ok(!payload.resolved.map((p: { name: string }) => p.name).includes("npm"), "npm should be deselected");
   });
 
   it("access level can be restricted from read-write to read via override", () => {
@@ -226,10 +226,10 @@ console.log = (...args) => lines.push(args.join(" "));
     assert.ok(!payload.error, `unexpected error: ${payload.error}`);
     // non-interactive note includes the tier name
     assert.ok(
-      payload.lines.some((l) => l.includes("balanced")),
+      payload.lines.some((l: string) => l.includes("balanced")),
       `summary must mention balanced tier, got: ${JSON.stringify(payload.lines)}`,
     );
-    assert.ok(payload.lines.some((l) => l.includes("TIER:balanced")));
+    assert.ok(payload.lines.some((l: string) => l.includes("TIER:balanced")));
   });
 
   it("selected tier is persisted to the registry via updateSandbox({ policyTier })", () => {
@@ -261,7 +261,7 @@ console.log = (...args) => lines.push(args.join(" "));
     const payload = JSON.parse(result.stdout.trim());
     assert.ok(!payload.error, `unexpected error: ${payload.error}`);
     // registry.updateSandbox must have been called with policyTier: "open"
-    const tierUpdate = payload.updates.find((u) => u.policyTier !== undefined);
+    const tierUpdate = payload.updates.find((u: { policyTier?: string }) => u.policyTier !== undefined);
     assert.ok(
       tierUpdate,
       `updateSandbox should have been called with policyTier, updates: ${JSON.stringify(payload.updates)}`,
@@ -276,7 +276,7 @@ describe("selectTierPresetsAndAccess", () => {
   const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
   const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
 
-  function buildPresetsScript(body) {
+  function buildPresetsScript(body: string): string {
     const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
@@ -299,7 +299,7 @@ ${body}
 `;
   }
 
-  function run(body) {
+  function run(body: string): SpawnSyncReturns<string> {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-presets-"));
     const scriptPath = path.join(tmpDir, "script.js");
     fs.writeFileSync(scriptPath, buildPresetsScript(body));
@@ -322,7 +322,7 @@ ${body}
 })().catch((e) => { process.stderr.write(e.message); process.exit(1); });
 `);
     assert.equal(result.status, 0, result.stderr);
-    const resolved = JSON.parse(result.stdout.trim());
+    const resolved: Array<{ name: string; access: string }> = JSON.parse(result.stdout.trim());
     const names = resolved.map((p) => p.name);
     assert.ok(names.includes("npm"), "npm should be included");
     assert.ok(names.includes("brave"), "brave should be included");
@@ -354,7 +354,7 @@ ${body}
 })().catch((e) => { process.stderr.write(e.message); process.exit(1); });
 `);
     assert.equal(result.status, 0, result.stderr);
-    const resolved = JSON.parse(result.stdout.trim());
+    const resolved: Array<{ name: string }> = JSON.parse(result.stdout.trim());
     const names = resolved.map((p) => p.name);
     assert.ok(names.includes("slack"), "slack should be included via extraSelected");
     assert.ok(names.includes("npm"), "npm (tier default) should still be included");
@@ -369,7 +369,7 @@ ${body}
 })().catch((e) => { process.stderr.write(e.message); process.exit(1); });
 `);
     assert.equal(result.status, 0, result.stderr);
-    const resolved = JSON.parse(result.stdout.trim());
+    const resolved: Array<{ name: string }> = JSON.parse(result.stdout.trim());
     const names = resolved.map((p) => p.name);
     assert.ok(!names.includes("nonexistent-preset"), "invalid preset should be dropped");
   });
@@ -383,7 +383,7 @@ ${body}
 })().catch((e) => { process.stderr.write(e.message); process.exit(1); });
 `);
     assert.equal(result.status, 0, result.stderr);
-    const resolved = JSON.parse(result.stdout.trim());
+    const resolved: Array<{ name: string }> = JSON.parse(result.stdout.trim());
     const names = resolved.map((p) => p.name);
     const tierNames = ["npm", "pypi", "huggingface", "brew", "brave"];
     const lastTierIdx = Math.max(...tierNames.map((n) => names.indexOf(n)));
@@ -400,7 +400,7 @@ ${body}
 })().catch((e) => { process.stderr.write(e.message); process.exit(1); });
 `);
     assert.equal(result.status, 0, result.stderr);
-    const resolved = JSON.parse(result.stdout.trim());
+    const resolved: Array<{ name: string; access: string }> = JSON.parse(result.stdout.trim());
     assert.ok(resolved.length > 0, "open tier should have presets");
     for (const p of resolved) {
       assert.equal(typeof p.name, "string");
