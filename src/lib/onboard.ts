@@ -2898,7 +2898,7 @@ async function setupNim(gpu) {
 
         const envProviderHint = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
         const envProviderIdx = envProviderHint
-          ? options.findIndex((o) => o.key === envProviderHint)
+          ? options.findIndex((o) => o.key.toLowerCase() === envProviderHint)
           : -1;
         const defaultIdx =
           (envProviderIdx >= 0 ? envProviderIdx : options.findIndex((o) => o.key === "build")) + 1;
@@ -4201,7 +4201,7 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
 
   // ── Non-interactive: return tier defaults silently ─────────────────
   if (isNonInteractive()) {
-    return [...included].map((name) => ({ name, access: accessModes[name] }));
+    return ordered.filter((p) => included.has(p.name)).map((p) => ({ name: p.name, access: accessModes[p.name] }));
   }
 
   // ── Fallback: non-TTY ─────────────────────────────────────────────
@@ -4233,7 +4233,7 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
         }
       }
     }
-    return [...included].map((name) => ({ name, access: accessModes[name] }));
+    return ordered.filter((p) => included.has(p.name)).map((p) => ({ name: p.name, access: accessModes[p.name] }));
   }
 
   // ── Raw-mode TUI ─────────────────────────────────────────────────
@@ -4293,7 +4293,7 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
       if (key === "\r" || key === "\n") {
         cleanup();
         process.stdout.write("\n");
-        resolve([...included].map((name) => ({ name, access: accessModes[name] })));
+        resolve(ordered.filter((p) => included.has(p.name)).map((p) => ({ name: p.name, access: accessModes[p.name] })));
       } else if (key === "\x03") {
         cleanup();
         process.exit(1);
@@ -4565,11 +4565,15 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     process.exit(1);
   }
 
+  const accessByName = {};
+  for (const p of resolvedPresets) accessByName[p.name] = p.access;
   const newlySelected = interactiveChoice.filter((name) => !applied.includes(name));
   for (const name of newlySelected) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        policies.applyPreset(sandboxName, name);
+        // Pass access mode so applyPreset can distinguish read vs read-write
+        // when preset infrastructure supports it.
+        policies.applyPreset(sandboxName, name, { access: accessByName[name] });
         break;
       } catch (err) {
         const message = err && err.message ? err.message : String(err);

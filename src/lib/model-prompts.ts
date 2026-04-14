@@ -158,7 +158,7 @@ export async function promptCloudModel(options: ModelPromptOptions = {}): Promis
   }
 
   // If default is a custom (non-curated) model ID, pre-fill it in the manual prompt
-  const manualDefault = defaultCuratedIdx < 0 && defaultModelId ? defaultModelId : "";
+  const manualDefault = defaultCuratedIdx < 0 && defaultModelId && isSafeModelId(defaultModelId) ? defaultModelId : "";
   const manualLabel = manualDefault
     ? `  NVIDIA Endpoints model id [${manualDefault}]: `
     : "  NVIDIA Endpoints model id: ";

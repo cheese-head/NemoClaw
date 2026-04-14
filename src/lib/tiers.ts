@@ -57,7 +57,7 @@ function getTier(name) {
  */
 function resolveTierPresets(tierName, options = {}) {
   const overrides = options.overrides || {};
-  const selected = options.selected || null;
+  const selected = options.selected === undefined ? null : options.selected;
   const tier = getTier(tierName);
   if (!tier) {
     throw new Error(`Unknown tier: ${tierName}`);
