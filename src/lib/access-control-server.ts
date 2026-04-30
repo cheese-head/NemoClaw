@@ -17,7 +17,8 @@ import {
 export type AccessControlServerOptions = {
   tls: https.ServerOptions;
   allowedHosts: readonly string[];
-  pluginAttestationToken: string;
+  pluginAttestationToken?: string;
+  verifyPluginAttestation?: (token: string, authenticated: AuthenticatedSandbox) => boolean;
   deps?: AccessRequestDeps;
 };
 
@@ -66,9 +67,20 @@ function verifyHost(req: http.IncomingMessage, allowedHosts: readonly string[]):
   }
 }
 
-function verifyAttestation(req: http.IncomingMessage, expectedToken: string): void {
+function readAttestationToken(req: http.IncomingMessage): string {
   const actual = req.headers["x-nemoclaw-plugin-attestation"];
-  if (typeof actual !== "string" || actual !== expectedToken) {
+  return typeof actual === "string" ? actual : "";
+}
+
+function verifyAttestation(
+  token: string,
+  authenticated: AuthenticatedSandbox,
+  options: AccessControlServerOptions,
+): void {
+  const ok =
+    options.verifyPluginAttestation?.(token, authenticated) ??
+    (typeof options.pluginAttestationToken === "string" && token === options.pluginAttestationToken);
+  if (!ok) {
     throw Object.assign(new Error("Invalid plugin attestation."), { statusCode: 401 });
   }
 }
@@ -254,8 +266,8 @@ export function createAccessControlServer(options: AccessControlServerOptions): 
     void (async () => {
       try {
         verifyHost(req, options.allowedHosts);
-        verifyAttestation(req, options.pluginAttestationToken);
         const authenticated = authenticateSandbox(req);
+        verifyAttestation(readAttestationToken(req), authenticated, options);
         const url = new URL(req.url ?? "/", "https://nemoclaw-control.local");
 
         if (req.method === "POST" && url.pathname === "/v1/access-requests") {

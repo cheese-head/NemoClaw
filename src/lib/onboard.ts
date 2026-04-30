@@ -144,6 +144,7 @@ const {
   sandboxControlPlaneEnv,
   cleanupSandboxControlPlaneIdentity,
 } = require("./control-plane-identity");
+const { startAccessControl } = require("./services");
 const platformUtils: typeof import("./platform") = require("./platform");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
 const { resolveOpenshell } = require("./resolve-openshell");
@@ -3961,12 +3962,15 @@ async function createSandbox(
   // 18789 and the gateway listens on the wrong port. (#2267, #1925)
   const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
   envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
-  const controlUrl = process.env.NEMOCLAW_CONTROL_URL;
+  const controlService = startAccessControl({ sandboxName });
+  const controlUrl = process.env.NEMOCLAW_CONTROL_URL || controlService.url;
   if (controlUrl) {
     const controlIdentity = createSandboxControlPlaneIdentity(sandboxName, {
       controlUrl,
       servername:
-        process.env.NEMOCLAW_CONTROL_SERVERNAME || defaultControlPlaneServername(controlUrl),
+        process.env.NEMOCLAW_CONTROL_SERVERNAME ||
+        controlService.servername ||
+        defaultControlPlaneServername(controlUrl),
     });
     for (const [key, value] of Object.entries(sandboxControlPlaneEnv(controlIdentity))) {
       envArgs.push(formatEnvAssignment(key, String(value)));

@@ -17,6 +17,7 @@ import { join } from "node:path";
 
 import { DASHBOARD_PORT } from "./ports";
 import { buildSubprocessEnv } from "./subprocess-env";
+import { ensureControlPlaneServerIdentity } from "./control-plane-identity";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,6 +38,11 @@ export interface ServiceStatus {
   name: string;
   running: boolean;
   pid: number | null;
+}
+
+export interface AccessControlServiceInfo {
+  url: string;
+  servername: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,11 +113,12 @@ function removePid(pidDir: string, name: string): void {
 // ---------------------------------------------------------------------------
 
 type ServiceName = "cloudflared";
-const SERVICE_NAMES: readonly ServiceName[] = ["cloudflared"];
+type ManagedServiceName = ServiceName | "access-control";
+const SERVICE_NAMES: readonly ManagedServiceName[] = ["access-control", "cloudflared"];
 
 function startService(
   pidDir: string,
-  name: ServiceName,
+  name: ManagedServiceName,
   command: string,
   args: string[],
   env?: Record<string, string>,
@@ -151,7 +158,7 @@ function startService(
 }
 
 /** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
-function stopService(pidDir: string, name: ServiceName): void {
+function stopService(pidDir: string, name: ManagedServiceName): void {
   const pid = readPid(pidDir, name);
   if (pid === null) {
     info(`${name} was not running`);
@@ -251,6 +258,31 @@ export function stopAll(opts: ServiceOptions = {}): void {
   info("All services stopped.");
 }
 
+export function defaultAccessControlServiceInfo(): AccessControlServiceInfo {
+  const port = process.env.NEMOCLAW_ACCESS_CONTROL_PORT ?? "19443";
+  return {
+    url: process.env.NEMOCLAW_CONTROL_URL ?? `https://host.openshell.internal:${port}`,
+    servername: process.env.NEMOCLAW_CONTROL_SERVERNAME ?? "nemoclaw-control.local",
+  };
+}
+
+export function startAccessControl(opts: ServiceOptions = {}): AccessControlServiceInfo {
+  const pidDir = resolvePidDir(opts);
+  ensurePidDir(pidDir);
+  ensureControlPlaneServerIdentity();
+  startService(
+    pidDir,
+    "access-control",
+    process.execPath,
+    [join(__dirname, "access-control-service.js")],
+    {
+      NEMOCLAW_ACCESS_CONTROL_PORT: process.env.NEMOCLAW_ACCESS_CONTROL_PORT ?? "19443",
+      NEMOCLAW_ACCESS_CONTROL_HOST: process.env.NEMOCLAW_ACCESS_CONTROL_HOST ?? "0.0.0.0",
+    },
+  );
+  return defaultAccessControlServiceInfo();
+}
+
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
   const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
@@ -260,6 +292,8 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   // Messaging (Telegram, Discord, Slack) is now handled natively by OpenClaw
   // inside the sandbox via the OpenShell provider/placeholder/L7-proxy pipeline.
   // No host-side bridge processes are needed. See: PR #1081.
+
+  startAccessControl(opts);
 
   // cloudflared tunnel
   try {

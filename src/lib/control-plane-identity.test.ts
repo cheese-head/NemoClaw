@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   cleanupSandboxControlPlaneIdentity,
   createSandboxControlPlaneIdentity,
+  ensureControlPlaneServerIdentity,
   readSandboxControlPlaneIdentity,
   sandboxControlPlaneDir,
   sandboxControlPlaneEnv,
@@ -60,6 +61,21 @@ describe("control-plane identity", () => {
     expect(env.NEMOCLAW_CONTROL_KEY_PEM_B64).toBeTruthy();
     expect(env.NEMOCLAW_CONTROL_CA_PEM_B64).toBeTruthy();
     expect(env.NEMOCLAW_PLUGIN_ATTESTATION).toBe(identity.pluginAttestationToken);
+  });
+
+  it("issues server identity from the same control-plane CA", () => {
+    const homeDir = makeTempHome();
+    const server = ensureControlPlaneServerIdentity({ homeDir });
+    const sandbox = createSandboxControlPlaneIdentity("sandbox-a", {
+      controlUrl: "https://host.openshell.internal:19443",
+      servername: "nemoclaw-control.local",
+      deps: { homeDir },
+    });
+
+    expect(server.certPem).toContain("BEGIN CERTIFICATE");
+    expect(server.keyPem).toContain("BEGIN PRIVATE KEY");
+    expect(server.caPem).toBe(sandbox.caPem);
+    expect(fs.statSync(server.keyPath).mode & 0o077).toBe(0);
   });
 
   it("rejects non-HTTPS control URLs and removes identity material on cleanup", () => {

@@ -30,6 +30,15 @@ export type SandboxControlPlaneIdentity = {
   expiresAt: string;
 };
 
+export type ControlPlaneServerIdentity = {
+  caPath: string;
+  certPath: string;
+  keyPath: string;
+  caPem: string;
+  certPem: string;
+  keyPem: string;
+};
+
 const CERT_TTL_DAYS = 1;
 const CONTROL_HOST_DEFAULT = "nemoclaw-control.local";
 
@@ -60,6 +69,14 @@ export function sandboxControlPlaneDir(
   deps: ControlPlaneIdentityDeps = {},
 ): string {
   return path.join(controlPlaneStateDir(deps), fileStem(sandboxName));
+}
+
+function controlPlaneCaDir(deps: ControlPlaneIdentityDeps = {}): string {
+  return path.join(controlPlaneStateDir(deps), "ca");
+}
+
+function controlPlaneServerDir(deps: ControlPlaneIdentityDeps = {}): string {
+  return path.join(controlPlaneStateDir(deps), "server");
 }
 
 function openssl(args: string[], cwd: string, deps: Required<ControlPlaneIdentityDeps>): void {
@@ -169,8 +186,17 @@ export function createSandboxControlPlaneIdentity(
   }
 
   const dir = sandboxControlPlaneDir(sandboxName, deps);
+  const caDir = controlPlaneCaDir(deps);
+  ensureConfigDir(caDir);
+  createCaIfMissing(caDir, deps);
   ensureConfigDir(dir);
-  createCaIfMissing(dir, deps);
+  for (const file of ["ca.crt", "ca.key", "ca.srl"]) {
+    const source = path.join(caDir, file);
+    if (fs.existsSync(source)) {
+      fs.copyFileSync(source, path.join(dir, file));
+      fs.chmodSync(path.join(dir, file), 0o600);
+    }
+  }
   issueSandboxClientCert(dir, sandboxName, deps);
 
   const caPath = path.join(dir, "ca.crt");
@@ -200,6 +226,79 @@ export function createSandboxControlPlaneIdentity(
     expiresAt: identity.expiresAt,
   });
   return identity;
+}
+
+export function ensureControlPlaneServerIdentity(
+  depsInput: ControlPlaneIdentityDeps = {},
+): ControlPlaneServerIdentity {
+  const deps = depsOrDefault(depsInput);
+  const caDir = controlPlaneCaDir(deps);
+  const serverDir = controlPlaneServerDir(deps);
+  ensureConfigDir(caDir);
+  ensureConfigDir(serverDir);
+  createCaIfMissing(caDir, deps);
+
+  const caPath = path.join(caDir, "ca.crt");
+  const keyPath = path.join(serverDir, "server.key");
+  const certPath = path.join(serverDir, "server.crt");
+  if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+    writeFile0600(
+      path.join(serverDir, "server.ext"),
+      [
+        "subjectAltName=DNS:nemoclaw-control.local,DNS:host.openshell.internal,DNS:localhost,IP:127.0.0.1",
+        "extendedKeyUsage=serverAuth",
+        "",
+      ].join("\n"),
+    );
+    openssl(["genrsa", "-out", keyPath, "3072"], serverDir, deps);
+    openssl(
+      [
+        "req",
+        "-new",
+        "-key",
+        keyPath,
+        "-subj",
+        "/CN=nemoclaw-control.local",
+        "-out",
+        "server.csr",
+      ],
+      serverDir,
+      deps,
+    );
+    openssl(
+      [
+        "x509",
+        "-req",
+        "-in",
+        "server.csr",
+        "-CA",
+        path.join(caDir, "ca.crt"),
+        "-CAkey",
+        path.join(caDir, "ca.key"),
+        "-CAcreateserial",
+        "-out",
+        certPath,
+        "-days",
+        String(CERT_TTL_DAYS),
+        "-sha256",
+        "-extfile",
+        "server.ext",
+      ],
+      serverDir,
+      deps,
+    );
+    fs.chmodSync(keyPath, 0o600);
+    fs.chmodSync(certPath, 0o600);
+  }
+
+  return {
+    caPath,
+    certPath,
+    keyPath,
+    caPem: fs.readFileSync(caPath, "utf-8"),
+    certPem: fs.readFileSync(certPath, "utf-8"),
+    keyPem: fs.readFileSync(keyPath, "utf-8"),
+  };
 }
 
 export function readSandboxControlPlaneIdentity(

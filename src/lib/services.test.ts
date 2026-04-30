@@ -26,7 +26,7 @@ describe("getServiceStatuses", () => {
 
   it("returns stopped status when no PID files exist", () => {
     const statuses = getServiceStatuses({ pidDir });
-    expect(statuses).toHaveLength(1);
+    expect(statuses).toHaveLength(2);
     for (const s of statuses) {
       expect(s.running).toBe(false);
       expect(s.pid).toBeNull();
@@ -36,6 +36,7 @@ describe("getServiceStatuses", () => {
   it("returns service name cloudflared", () => {
     const statuses = getServiceStatuses({ pidDir });
     const names = statuses.map((s) => s.name);
+    expect(names).toContain("access-control");
     expect(names).toContain("cloudflared");
   });
 
@@ -61,7 +62,7 @@ describe("getServiceStatuses", () => {
     const nested = join(pidDir, "nested", "deep");
     const statuses = getServiceStatuses({ pidDir: nested });
     expect(existsSync(nested)).toBe(true);
-    expect(statuses).toHaveLength(1);
+    expect(statuses).toHaveLength(2);
   });
 });
 
