@@ -418,9 +418,23 @@ async function waitForAccessStatus(
 }
 
 function accessClientOptions(): AccessClientOptions {
+  const controlUrl = process.env.NEMOCLAW_CONTROL_URL;
+  if (!controlUrl) {
+    throw new Error("NEMOCLAW_CONTROL_URL is required for NemoClaw mTLS control access.");
+  }
   return {
-    ...(process.env.NEMOCLAW_CONTROL_SOCKET
-      ? { socketPath: process.env.NEMOCLAW_CONTROL_SOCKET }
+    controlUrl,
+    ...(process.env.NEMOCLAW_CONTROL_CA_PATH
+      ? { caPath: process.env.NEMOCLAW_CONTROL_CA_PATH }
+      : {}),
+    ...(process.env.NEMOCLAW_CONTROL_CERT_PATH
+      ? { certPath: process.env.NEMOCLAW_CONTROL_CERT_PATH }
+      : {}),
+    ...(process.env.NEMOCLAW_CONTROL_KEY_PATH
+      ? { keyPath: process.env.NEMOCLAW_CONTROL_KEY_PATH }
+      : {}),
+    ...(process.env.NEMOCLAW_CONTROL_SERVERNAME
+      ? { servername: process.env.NEMOCLAW_CONTROL_SERVERNAME }
       : {}),
     ...(process.env.NEMOCLAW_PLUGIN_ATTESTATION
       ? { attestationToken: process.env.NEMOCLAW_PLUGIN_ATTESTATION }

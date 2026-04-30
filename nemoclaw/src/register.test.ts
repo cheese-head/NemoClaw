@@ -28,6 +28,9 @@ const mockedExecFileSync = vi.mocked(execFileSync);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 const mockedCreateAccessRequest = vi.mocked(createAccessRequest);
 const mockedGetAccessRequest = vi.mocked(getAccessRequest);
+const CONTROL_OPTIONS = {
+  controlUrl: "https://nemoclaw-control.local",
+};
 
 function createMockApi(): OpenClawPluginApi {
   return {
@@ -65,6 +68,12 @@ describe("plugin registration", () => {
     mockedLoadOnboardConfig.mockReturnValue(null);
     mockedCreateAccessRequest.mockReset();
     mockedGetAccessRequest.mockReset();
+    process.env.NEMOCLAW_CONTROL_URL = CONTROL_OPTIONS.controlUrl;
+    delete process.env.NEMOCLAW_CONTROL_CA_PATH;
+    delete process.env.NEMOCLAW_CONTROL_CERT_PATH;
+    delete process.env.NEMOCLAW_CONTROL_KEY_PATH;
+    delete process.env.NEMOCLAW_CONTROL_SERVERNAME;
+    delete process.env.NEMOCLAW_PLUGIN_ATTESTATION;
   });
 
   it("registers a slash command", () => {
@@ -144,7 +153,7 @@ describe("plugin registration", () => {
           reason: "Inspect a repository.",
         },
       },
-      {},
+      CONTROL_OPTIONS,
     );
     expect(mockedGetAccessRequest).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -204,7 +213,7 @@ describe("plugin registration", () => {
       request_id: "req_denied",
     });
 
-    expect(mockedGetAccessRequest).toHaveBeenCalledWith("req_denied", {});
+    expect(mockedGetAccessRequest).toHaveBeenCalledWith("req_denied", CONTROL_OPTIONS);
     expect(mockedCreateAccessRequest).not.toHaveBeenCalled();
     expect(result).toEqual({
       request_id: "req_denied",
@@ -217,6 +226,27 @@ describe("plugin registration", () => {
     const api = createMockApi();
     // registerCli should not exist on the API interface after removal
     expect("registerCli" in api).toBe(false);
+  });
+
+  it("requires an HTTPS mTLS control URL before calling NemoClaw control", async () => {
+    delete process.env.NEMOCLAW_CONTROL_URL;
+    mockedCreateAccessRequest.mockResolvedValue({
+      request_id: "req_123",
+      status: "applied",
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "request_resource_access");
+
+    await expect(
+      tool.execute("call_1", {
+        user_intent: "I want access to GitHub",
+        resource: "github",
+        reason: "Inspect a repository.",
+      }),
+    ).rejects.toThrow(/NEMOCLAW_CONTROL_URL is required/);
+    expect(mockedCreateAccessRequest).not.toHaveBeenCalled();
   });
 
   it("registers custom model when onboard config has a model", () => {

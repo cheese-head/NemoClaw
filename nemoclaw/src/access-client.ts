@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import http from "node:http";
-
-export const DEFAULT_CONTROL_SOCKET_PATH = "/run/nemoclaw/control.sock";
+import fs from "node:fs";
+import https from "node:https";
 
 export type AccessStatus =
   | "pending_approval"
@@ -41,7 +40,14 @@ export interface CreateAccessRequestBody {
 }
 
 export interface AccessClientOptions {
-  socketPath?: string;
+  controlUrl: string;
+  ca?: string | Buffer;
+  caPath?: string;
+  cert?: string | Buffer;
+  certPath?: string;
+  key?: string | Buffer;
+  keyPath?: string;
+  servername?: string;
   attestationToken?: string;
   timeoutMs?: number;
 }
@@ -65,10 +71,15 @@ function parseAccessResponse(raw: string): AccessRequestResponse {
 
 function requestJson(
   method: "GET" | "POST",
-  path: string,
+  requestPath: string,
   body: CreateAccessRequestBody | undefined,
-  options: AccessClientOptions = {},
+  options: AccessClientOptions,
 ): Promise<AccessRequestResponse> {
+  const controlUrl = new URL(options.controlUrl);
+  if (controlUrl.protocol !== "https:") {
+    throw new Error("NemoClaw control URL must use HTTPS with mTLS.");
+  }
+
   const payload = body === undefined ? undefined : JSON.stringify(body);
   const headers: Record<string, string | number> = {
     Accept: "application/json",
@@ -82,12 +93,18 @@ function requestJson(
   }
 
   return new Promise((resolve, reject) => {
-    const req = http.request(
+    const req = https.request(
       {
         method,
-        path,
-        socketPath: options.socketPath ?? DEFAULT_CONTROL_SOCKET_PATH,
+        protocol: controlUrl.protocol,
+        hostname: controlUrl.hostname,
+        port: controlUrl.port === "" ? undefined : Number(controlUrl.port),
+        path: `${controlUrl.pathname.replace(/\/$/, "")}${requestPath}`,
         headers,
+        ca: options.ca ?? (options.caPath ? fs.readFileSync(options.caPath) : undefined),
+        cert: options.cert ?? (options.certPath ? fs.readFileSync(options.certPath) : undefined),
+        key: options.key ?? (options.keyPath ? fs.readFileSync(options.keyPath) : undefined),
+        servername: options.servername ?? controlUrl.hostname,
         timeout: options.timeoutMs ?? 30_000,
       },
       (res) => {
@@ -98,7 +115,7 @@ function requestJson(
           if (res.statusCode === undefined || res.statusCode < 200 || res.statusCode >= 300) {
             reject(
               new Error(
-                `NemoClaw control ${method} ${path} failed with HTTP ${res.statusCode ?? "unknown"}: ${raw}`,
+                `NemoClaw control ${method} ${requestPath} failed with HTTP ${res.statusCode ?? "unknown"}: ${raw}`,
               ),
             );
             return;
@@ -114,7 +131,7 @@ function requestJson(
     );
 
     req.on("timeout", () => {
-      req.destroy(new Error(`NemoClaw control ${method} ${path} timed out`));
+      req.destroy(new Error(`NemoClaw control ${method} ${requestPath} timed out`));
     });
     req.on("error", reject);
     if (payload !== undefined) {
@@ -126,14 +143,14 @@ function requestJson(
 
 export function createAccessRequest(
   body: CreateAccessRequestBody,
-  options?: AccessClientOptions,
+  options: AccessClientOptions,
 ): Promise<AccessRequestResponse> {
   return requestJson("POST", "/v1/access-requests", body, options);
 }
 
 export function getAccessRequest(
   requestId: string,
-  options?: AccessClientOptions,
+  options: AccessClientOptions,
 ): Promise<AccessRequestResponse> {
   return requestJson(
     "GET",
