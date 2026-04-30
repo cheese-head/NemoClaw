@@ -200,6 +200,25 @@ export const COMMANDS: readonly CommandDef[] = [
     group: "Policy Presets",
     scope: "sandbox",
   },
+  {
+    usage: "nemoclaw <name> access revoke",
+    description: "Revoke an open or applied agent resource access request",
+    flags: "<request-id>",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> access expire",
+    description: "Expire access requests whose TTL has elapsed",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> access audit-verify",
+    description: "Verify the access-request audit hash chain",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
 
   // ── Messaging Channels ──
   {

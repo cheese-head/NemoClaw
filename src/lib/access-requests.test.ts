@@ -13,9 +13,11 @@ import {
   accessRequestStatePath,
   canonicalizeAccessRequest,
   createAccessRequest,
+  expireAccessRequests,
   readAccessRequestAudit,
   readAccessRequestState,
   transitionAccessRequest,
+  verifyAccessRequestAudit,
   type AccessRequestDeps,
 } from "../../dist/lib/access-requests";
 
@@ -260,6 +262,49 @@ describe("access requests", () => {
       event: "transitioned",
       status: "denied",
       reason: "No longer needed",
+    });
+  });
+
+  it("expires open requests after their TTL", () => {
+    const deps = makeDeps();
+    const created = createAccessRequest(
+      "sandbox-a",
+      {
+        resource: "github",
+        task_id: "task-ttl",
+      },
+      { deps, ceiling: { requestTtlMs: 1_000 } },
+    );
+
+    deps.advance(1_001);
+    const expired = expireAccessRequests("sandbox-a", { deps });
+
+    expect(expired.map((request) => request.id)).toEqual([created.request.id]);
+    expect(readAccessRequestState("sandbox-a", deps).requests[0]).toMatchObject({
+      status: "expired",
+      status_reason: "Access request TTL expired.",
+    });
+  });
+
+  it("verifies audit chain integrity and detects tampering", () => {
+    const deps = makeDeps();
+    createAccessRequest("sandbox-a", { resource: "github", task_id: "task-a" }, { deps });
+    transitionAccessRequest("sandbox-a", "req-1", "denied", { deps, reason: "No" });
+
+    expect(verifyAccessRequestAudit("sandbox-a", deps)).toMatchObject({
+      ok: true,
+      records: 2,
+    });
+
+    const auditPath = accessRequestAuditPath("sandbox-a", deps);
+    const [first, second] = fs.readFileSync(auditPath, "utf-8").trim().split("\n");
+    const tampered = JSON.parse(second);
+    tampered.status = "applied";
+    fs.writeFileSync(auditPath, `${first}\n${JSON.stringify(tampered)}\n`);
+
+    expect(verifyAccessRequestAudit("sandbox-a", deps)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("record hash mismatch"),
     });
   });
 });

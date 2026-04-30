@@ -2409,6 +2409,22 @@ async function sandboxAccess(sandboxName: string, args: string[] = []): Promise<
       printAccessRequest(getAccessRequestOrExit(sandboxName, requestId));
       return;
     }
+    case "expire": {
+      const expired = accessRequests.expireAccessRequests(sandboxName);
+      console.log(`  Expired ${expired.length} access request(s) for sandbox '${sandboxName}'.`);
+      return;
+    }
+    case "audit-verify": {
+      const result = accessRequests.verifyAccessRequestAudit(sandboxName);
+      if (!result.ok) {
+        console.error(`  Access request audit verification failed: ${result.error}`);
+        process.exit(1);
+      }
+      console.log(
+        `  Access request audit verified: ${result.records} record(s), head ${result.head_hash ?? "none"}.`,
+      );
+      return;
+    }
     case "deny": {
       const requestId = subArgs[0];
       if (!requestId || requestId.startsWith("--")) {
@@ -2480,9 +2496,32 @@ async function sandboxAccess(sandboxName: string, args: string[] = []): Promise<
       }
       return;
     }
+    case "revoke": {
+      const requestId = subArgs[0];
+      if (!requestId || requestId.startsWith("--")) {
+        console.error("  Usage: nemoclaw <name> access revoke <request-id>");
+        process.exit(1);
+      }
+      const record = getAccessRequestOrExit(sandboxName, requestId);
+      if (!["pending", "pending_activation", "applied"].includes(record.status)) {
+        console.error(`  Access request '${requestId}' is not revocable (status: ${record.status}).`);
+        process.exit(1);
+      }
+      if (record.status === "applied" && !policies.removePreset(sandboxName, record.preset)) {
+        console.error(`  Failed to remove preset '${record.preset}' while revoking '${requestId}'.`);
+        process.exit(1);
+      }
+      accessRequests.transitionAccessRequest(sandboxName, requestId, "revoked", {
+        reason: "Operator revoked access request.",
+      });
+      console.log(`  Revoked access request: ${requestId}`);
+      return;
+    }
     default:
       console.error(`  Unknown access subcommand: ${subcommand}`);
-      console.error("  Usage: nemoclaw <name> access <inbox|status|approve|deny> [args]");
+      console.error(
+        "  Usage: nemoclaw <name> access <inbox|status|approve|deny|revoke|expire|audit-verify> [args]",
+      );
       process.exit(1);
   }
 }

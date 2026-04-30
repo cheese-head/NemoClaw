@@ -27,7 +27,8 @@ export type AccessRequestStatus =
   | "denied"
   | "denied_by_ceiling"
   | "failed"
-  | "expired";
+  | "expired"
+  | "revoked";
 
 export type AccessRequestTerminalStatus = Extract<
   AccessRequestStatus,
@@ -75,6 +76,7 @@ export type AccessRequestRecord = CanonicalAccessRequest & {
   request_hash: string;
   created_at: string;
   updated_at: string;
+  expires_at?: string;
   ceiling_reason?: string;
   status_reason?: string;
 };
@@ -111,6 +113,7 @@ export type AccessRequestCeiling = {
   maxRequestsPerHourPerSandbox?: number;
   maxOpenGrantsPerSandbox?: number;
   dedupeWindowMs?: number;
+  requestTtlMs?: number;
 };
 
 export type CreateAccessRequestResult = {
@@ -350,6 +353,7 @@ function mergeCeiling(ceiling: AccessRequestCeiling): Required<AccessRequestCeil
     maxOpenGrantsPerSandbox:
       ceiling.maxOpenGrantsPerSandbox ?? DEFAULT_ACCESS_REQUEST_CEILING.maxOpenGrantsPerSandbox,
     dedupeWindowMs: ceiling.dedupeWindowMs ?? DEFAULT_ACCESS_REQUEST_CEILING.dedupeWindowMs,
+    requestTtlMs: ceiling.requestTtlMs ?? 24 * 60 * 60 * 1000,
   };
 }
 
@@ -441,6 +445,7 @@ export function createAccessRequest(
     request_hash: canonical.request_hash,
     created_at: nowIso,
     updated_at: nowIso,
+    expires_at: new Date(nowMs + ceiling.requestTtlMs).toISOString(),
     ...(ceilingReason ? { ceiling_reason: ceilingReason } : {}),
   };
 
@@ -476,6 +481,78 @@ export function transitionAccessRequest(
   appendAuditRecord(state, request, "transitioned", deps, reason || undefined);
   writeAccessRequestState(state, deps);
   return request;
+}
+
+export function expireAccessRequests(
+  sandboxId: string,
+  options: { deps?: AccessRequestDeps; reason?: string } = {},
+): AccessRequestRecord[] {
+  const deps = depsOrDefault(options.deps ?? {});
+  const state = readAccessRequestState(sandboxId, deps);
+  const nowMs = deps.now().getTime();
+  const expired: AccessRequestRecord[] = [];
+
+  for (const request of state.requests) {
+    if (!isOpenStatus(request.status) || !request.expires_at) {
+      continue;
+    }
+    if (Date.parse(request.expires_at) > nowMs) {
+      continue;
+    }
+    request.status = "expired";
+    request.updated_at = deps.now().toISOString();
+    request.status_reason = sanitizeDisplayText(
+      options.reason ?? "Access request TTL expired.",
+      280,
+    );
+    appendAuditRecord(state, request, "transitioned", deps, request.status_reason);
+    expired.push(request);
+  }
+
+  if (expired.length > 0) {
+    writeAccessRequestState(state, deps);
+  }
+  return expired;
+}
+
+export function verifyAccessRequestAudit(
+  sandboxId: string,
+  deps: AccessRequestDeps = {},
+): { ok: true; records: number; head_hash: string | null } | { ok: false; records: number; error: string } {
+  const resolved = depsOrDefault(deps);
+  const records = readAccessRequestAudit(sandboxId, resolved);
+  let previous: string | null = null;
+
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index];
+    if (record.prev_record_hash !== previous) {
+      return {
+        ok: false,
+        records: index,
+        error: `Audit chain break at record ${index}: previous hash mismatch.`,
+      };
+    }
+    const { record_hash: _recordHash, ...withoutHash } = record;
+    const expected = resolved.hash(auditPayload(withoutHash));
+    if (record.record_hash !== expected) {
+      return {
+        ok: false,
+        records: index,
+        error: `Audit chain break at record ${index}: record hash mismatch.`,
+      };
+    }
+    previous = record.record_hash;
+  }
+
+  const state = readAccessRequestState(sandboxId, resolved);
+  if (state.audit_head_hash !== previous) {
+    return {
+      ok: false,
+      records: records.length,
+      error: "Audit state head does not match audit log head.",
+    };
+  }
+  return { ok: true, records: records.length, head_hash: previous };
 }
 
 export function readAccessRequestAudit(
