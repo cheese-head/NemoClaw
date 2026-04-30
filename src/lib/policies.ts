@@ -490,6 +490,15 @@ function applyPresetContent(
   presetContent: string,
   options: { custom?: { sourcePath?: string } } = {},
 ): boolean {
+  return applyPresetContentWithResult(sandboxName, presetName, presetContent, options).ok;
+}
+
+function applyPresetContentWithResult(
+  sandboxName: string,
+  presetName: string,
+  presetContent: string,
+  options: { custom?: { sourcePath?: string } } = {},
+): ApplyPresetResult {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
@@ -503,7 +512,11 @@ function applyPresetContent(
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) {
     console.error(`  Preset ${presetName} has no network_policies section.`);
-    return false;
+    return failedPresetResult(
+      sandboxName,
+      presetName,
+      `Preset ${presetName} has no network_policies section.`,
+    );
   }
 
   // Get current policy YAML from sandbox
@@ -562,7 +575,7 @@ function applyPresetContent(
     }
   }
 
-  return true;
+  return appliedPresetResult(sandboxName, presetName, endpoints);
 }
 
 /**
@@ -575,12 +588,20 @@ function applyPreset(
   presetName: string,
   options: Record<string, unknown> = {},
 ): boolean {
+  return applyPresetWithResult(sandboxName, presetName, options).ok;
+}
+
+function applyPresetWithResult(
+  sandboxName: string,
+  presetName: string,
+  options: Record<string, unknown> = {},
+): ApplyPresetResult {
   const presetContent = loadPreset(presetName);
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
-    return false;
+    return failedPresetResult(sandboxName, presetName, `Cannot load preset: ${presetName}`);
   }
-  return applyPresetContent(sandboxName, presetName, presetContent, options);
+  return applyPresetContentWithResult(sandboxName, presetName, presetContent, options);
 }
 
 /**
@@ -812,6 +833,60 @@ const PERMISSIVE_POLICY_PATH = path.join(
   "openclaw-sandbox-permissive.yaml",
 );
 
+type ApplyPresetResult =
+  | {
+      ok: true;
+      status: "applied";
+      sandboxName: string;
+      presetName: string;
+      endpoints: string[];
+      applyMethod: "openshell-cli-wait";
+      message: string;
+    }
+  | {
+      ok: false;
+      status: "failed";
+      sandboxName: string;
+      presetName: string;
+      endpoints: string[];
+      applyMethod: "openshell-cli-wait" | "none";
+      message: string;
+    };
+
+function appliedPresetResult(
+  sandboxName: string,
+  presetName: string,
+  endpoints: string[],
+): ApplyPresetResult {
+  return {
+    ok: true,
+    status: "applied",
+    sandboxName,
+    presetName,
+    endpoints,
+    applyMethod: "openshell-cli-wait",
+    message: `Applied preset: ${presetName}`,
+  };
+}
+
+function failedPresetResult(
+  sandboxName: string,
+  presetName: string,
+  message: string,
+  endpoints: string[] = [],
+  applyMethod: "openshell-cli-wait" | "none" = "none",
+): ApplyPresetResult {
+  return {
+    ok: false,
+    status: "failed",
+    sandboxName,
+    presetName,
+    endpoints,
+    applyMethod,
+    message,
+  };
+}
+
 /**
  * Resolve the on-disk path to the permissive policy YAML for the given
  * sandbox, honoring the agent-specific override registered in
@@ -872,7 +947,9 @@ export {
   mergePresetIntoPolicy,
   removePresetFromPolicy,
   applyPreset,
+  applyPresetWithResult,
   applyPresetContent,
+  applyPresetContentWithResult,
   loadPresetFromFile,
   removePreset,
   applyPermissivePolicy,

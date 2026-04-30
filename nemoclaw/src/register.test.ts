@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { OpenClawPluginApi } from "./index.js";
+import type { OpenClawPluginApi, PluginToolDefinition } from "./index.js";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(),
@@ -14,12 +14,20 @@ vi.mock("./onboard/config.js", () => ({
   describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
 }));
 
+vi.mock("./access-client.js", () => ({
+  createAccessRequest: vi.fn(),
+  getAccessRequest: vi.fn(),
+}));
+
 import { execFileSync } from "node:child_process";
 import register, { getPluginConfig } from "./index.js";
 import { loadOnboardConfig } from "./onboard/config.js";
+import { createAccessRequest, getAccessRequest } from "./access-client.js";
 
 const mockedExecFileSync = vi.mocked(execFileSync);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
+const mockedCreateAccessRequest = vi.mocked(createAccessRequest);
+const mockedGetAccessRequest = vi.mocked(getAccessRequest);
 
 function createMockApi(): OpenClawPluginApi {
   return {
@@ -37,9 +45,17 @@ function createMockApi(): OpenClawPluginApi {
     registerCommand: vi.fn(),
     registerProvider: vi.fn(),
     registerService: vi.fn(),
+    registerTool: vi.fn(),
     resolvePath: vi.fn((p: string) => p),
     on: vi.fn(),
   };
+}
+
+function getRegisteredTool(api: OpenClawPluginApi, name: string): PluginToolDefinition {
+  const call = vi.mocked(api.registerTool).mock.calls.find(([tool]) => tool.name === name);
+  expect(call).toBeDefined();
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by expect above
+  return call![0];
 }
 
 describe("plugin registration", () => {
@@ -47,6 +63,8 @@ describe("plugin registration", () => {
     vi.clearAllMocks();
     mockedExecFileSync.mockReset();
     mockedLoadOnboardConfig.mockReturnValue(null);
+    mockedCreateAccessRequest.mockReset();
+    mockedGetAccessRequest.mockReset();
   });
 
   it("registers a slash command", () => {
@@ -59,6 +77,140 @@ describe("plugin registration", () => {
     const api = createMockApi();
     register(api);
     expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
+  });
+
+  it("registers resource access tools", () => {
+    const api = createMockApi();
+    register(api);
+    expect(api.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "request_resource_access" }),
+    );
+    expect(api.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "check_resource_access" }),
+    );
+  });
+
+  it("request_resource_access schema defaults to least-privilege read access", () => {
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "request_resource_access");
+
+    expect(tool.parameters).toMatchObject({
+      required: ["user_intent", "resource", "reason"],
+      properties: {
+        access: {
+          enum: ["read", "read_write"],
+          default: "read",
+        },
+        wait_timeout_ms: {
+          default: 90_000,
+          maximum: 300_000,
+        },
+      },
+    });
+  });
+
+  it("request_resource_access posts a proposal and returns applied status only from NemoClaw", async () => {
+    mockedCreateAccessRequest.mockResolvedValue({
+      request_id: "req_123",
+      status: "applied",
+      message: "GitHub access applied.",
+      canonical_request: {
+        resource_type: "network",
+        preset: "github",
+        access: "read",
+        duration: "session",
+      },
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "request_resource_access");
+    const result = await tool.execute("call_1", {
+      user_intent: "I want access to GitHub",
+      resource: "github",
+      reason: "Inspect a repository.",
+    });
+
+    expect(mockedCreateAccessRequest).toHaveBeenCalledWith(
+      {
+        version: "nemoclaw.access.v1",
+        user_intent: "I want access to GitHub",
+        llm_proposal: {
+          resource_type: "network",
+          preset: "github",
+          access: "read",
+          duration: "session",
+          reason: "Inspect a repository.",
+        },
+      },
+      {},
+    );
+    expect(mockedGetAccessRequest).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      request_id: "req_123",
+      status: "applied",
+      message: "GitHub access applied.",
+      canonical_request: {
+        resource_type: "network",
+        preset: "github",
+        access: "read",
+        duration: "session",
+      },
+    });
+  });
+
+  it("request_resource_access returns pending with request_id when wait timeout is exhausted", async () => {
+    mockedCreateAccessRequest.mockResolvedValue({
+      request_id: "req_pending",
+      status: "pending_approval",
+      message: "Waiting for operator approval.",
+      canonical_request: {
+        preset: "github",
+      },
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "request_resource_access");
+    const result = await tool.execute("call_1", {
+      user_intent: "I want access to GitHub",
+      resource: "github",
+      reason: "Inspect a repository.",
+      wait_timeout_ms: 0,
+    });
+
+    expect(result).toEqual({
+      request_id: "req_pending",
+      status: "pending_approval",
+      message: "Waiting for operator approval.",
+      canonical_request: {
+        preset: "github",
+      },
+    });
+  });
+
+  it("check_resource_access gets existing request status without approval controls", async () => {
+    mockedGetAccessRequest.mockResolvedValue({
+      request_id: "req_denied",
+      status: "denied",
+      message: "Operator denied this request.",
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "check_resource_access");
+    const result = await tool.execute("call_2", {
+      request_id: "req_denied",
+    });
+
+    expect(mockedGetAccessRequest).toHaveBeenCalledWith("req_denied", {});
+    expect(mockedCreateAccessRequest).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      request_id: "req_denied",
+      status: "denied",
+      message: "Operator denied this request.",
+    });
   });
 
   it("does NOT register CLI commands", () => {

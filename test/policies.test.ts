@@ -230,6 +230,46 @@ describe("policies", () => {
   });
 
   describe("applyPreset disclosure logging", () => {
+    it("returns structured failure when preset does not exist", () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        const result = policies.applyPresetWithResult("test-sandbox", "nonexistent");
+        expect(result).toMatchObject({
+          ok: false,
+          status: "failed",
+          sandboxName: "test-sandbox",
+          presetName: "nonexistent",
+          applyMethod: "none",
+        });
+        expect(result.message).toContain("Cannot load preset");
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it("returns structured failure when preset has no network policies", () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        const result = policies.applyPresetContentWithResult(
+          "test-sandbox",
+          "empty",
+          "preset:\n  name: empty\n",
+        );
+        expect(result).toMatchObject({
+          ok: false,
+          status: "failed",
+          sandboxName: "test-sandbox",
+          presetName: "empty",
+          applyMethod: "none",
+        });
+        expect(result.message).toContain("no network_policies section");
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
     it("logs egress endpoints before applying", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});

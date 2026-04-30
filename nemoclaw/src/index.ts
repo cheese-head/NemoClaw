@@ -18,6 +18,15 @@ import {
   describeOnboardProvider,
   loadOnboardConfig,
 } from "./onboard/config.js";
+import {
+  createAccessRequest,
+  getAccessRequest,
+  type AccessCanonicalRequest,
+  type AccessClientOptions,
+  type AccessRequestResponse,
+  type AccessStatus,
+  type CreateAccessRequestBody,
+} from "./access-client.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
 
 type PluginScalar = string | number | boolean | null | undefined;
@@ -97,6 +106,17 @@ export interface PluginLogger {
 }
 
 type ToolParams = { [key: string]: PluginValue };
+
+export interface PluginToolResult {
+  [key: string]: PluginValue | AccessCanonicalRequest;
+}
+
+export interface PluginToolDefinition {
+  name: string;
+  description: string;
+  parameters: PluginRecord;
+  execute: (id: string, params: ToolParams) => PluginToolResult | Promise<PluginToolResult>;
+}
 
 /** Context passed to slash-command handlers. */
 export interface PluginCommandContext {
@@ -196,6 +216,7 @@ export interface OpenClawPluginApi {
   registerCommand: (command: PluginCommandDefinition) => void;
   registerProvider: (provider: ProviderPlugin) => void;
   registerService: (service: PluginService) => void;
+  registerTool: (tool: PluginToolDefinition) => void;
   resolvePath: (input: string) => string;
   on: (
     hookName: string,
@@ -321,6 +342,120 @@ export function getPluginConfig(api: OpenClawPluginApi): NemoClawConfig {
 
 /** Tool names that can write/modify files and should be scanned for secrets. */
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
+const DEFAULT_ACCESS_WAIT_MS = 90_000;
+const MAX_ACCESS_WAIT_MS = 300_000;
+const ACCESS_POLL_INTERVAL_MS = 1_000;
+const TERMINAL_ACCESS_STATUSES = new Set<AccessStatus>([
+  "applied",
+  "denied",
+  "denied_by_ceiling",
+  "failed",
+  "expired",
+]);
+
+function readNumberProperty(
+  value: PluginValue | object | null | undefined,
+  key: string,
+): number | undefined {
+  if (!isToolParams(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return typeof property === "number" && Number.isFinite(property) ? property : undefined;
+}
+
+function readAccessMode(params: ToolParams): "read" | "read_write" {
+  return params["access"] === "read_write" ? "read_write" : "read";
+}
+
+function readDuration(params: ToolParams): "session" | "persistent" {
+  return params["duration"] === "persistent" ? "persistent" : "session";
+}
+
+function clampWaitTimeout(value: number | undefined, fallback: number): number {
+  const timeout = value ?? fallback;
+  if (timeout <= 0) {
+    return 0;
+  }
+  return Math.min(timeout, MAX_ACCESS_WAIT_MS);
+}
+
+function toToolResult(response: AccessRequestResponse): PluginToolResult {
+  return {
+    request_id: response.request_id,
+    status: response.status,
+    message:
+      response.message ??
+      (TERMINAL_ACCESS_STATUSES.has(response.status)
+        ? "NemoClaw returned a terminal access status."
+        : "Access request is still pending; call check_resource_access with the request_id to continue polling."),
+    ...(response.canonical_request ? { canonical_request: response.canonical_request } : {}),
+  };
+}
+
+async function waitForAccessStatus(
+  initial: AccessRequestResponse,
+  timeoutMs: number,
+  clientOptions: AccessClientOptions,
+): Promise<AccessRequestResponse> {
+  if (TERMINAL_ACCESS_STATUSES.has(initial.status) || timeoutMs <= 0) {
+    return initial;
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let current = initial;
+  while (!TERMINAL_ACCESS_STATUSES.has(current.status) && Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(ACCESS_POLL_INTERVAL_MS, remaining)),
+    );
+    if (Date.now() > deadline) {
+      break;
+    }
+    current = await getAccessRequest(current.request_id, clientOptions);
+  }
+  return current;
+}
+
+function accessClientOptions(): AccessClientOptions {
+  return {
+    ...(process.env.NEMOCLAW_CONTROL_SOCKET
+      ? { socketPath: process.env.NEMOCLAW_CONTROL_SOCKET }
+      : {}),
+    ...(process.env.NEMOCLAW_PLUGIN_ATTESTATION
+      ? { attestationToken: process.env.NEMOCLAW_PLUGIN_ATTESTATION }
+      : {}),
+  };
+}
+
+function createAccessRequestBody(params: ToolParams): CreateAccessRequestBody {
+  const userIntent = readStringProperty(params, "user_intent") ?? "";
+  const resource = readStringProperty(params, "resource") ?? "";
+  const reason = readStringProperty(params, "reason") ?? "";
+  const taskId = readStringProperty(params, "task_id");
+
+  return {
+    version: "nemoclaw.access.v1",
+    ...(taskId ? { task_id: taskId } : {}),
+    user_intent: userIntent,
+    llm_proposal: {
+      resource_type: "network",
+      preset: resource,
+      access: readAccessMode(params),
+      duration: readDuration(params),
+      reason,
+    },
+  };
+}
+
+function accessToolParameters(required: string[], properties: PluginRecord): PluginRecord {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required,
+    properties,
+  };
+}
 
 export default function register(api: OpenClawPluginApi): void {
   // 1. Register /nemoclaw slash command (chat interface)
@@ -353,6 +488,92 @@ export default function register(api: OpenClawPluginApi): void {
   api.registerProvider(
     registeredProviderForConfig(onboardCfg, providerCredentialEnv, probed.model),
   );
+
+  api.registerTool({
+    name: "request_resource_access",
+    description:
+      "Request least-privilege external resource access through NemoClaw. Prefer read access unless the task clearly requires mutation. This proposes access only; NemoClaw and OpenShell decide and enforce.",
+    parameters: accessToolParameters(["user_intent", "resource", "reason"], {
+      user_intent: {
+        type: "string",
+        description: "The user's natural-language request.",
+      },
+      resource: {
+        type: "string",
+        description: "The requested resource, such as github, pypi, npm, slack, or a host name.",
+      },
+      access: {
+        type: "string",
+        enum: ["read", "read_write"],
+        default: "read",
+        description: "Requested access mode. Use read unless mutation is required.",
+      },
+      reason: {
+        type: "string",
+        description: "Why this access is needed for the current task.",
+      },
+      duration: {
+        type: "string",
+        enum: ["session", "persistent"],
+        default: "session",
+        description: "Requested duration. Session access is the v1 default.",
+      },
+      task_id: {
+        type: "string",
+        description: "Optional opaque task identifier for NemoClaw correlation.",
+      },
+      wait_timeout_ms: {
+        type: "number",
+        minimum: 0,
+        maximum: MAX_ACCESS_WAIT_MS,
+        default: DEFAULT_ACCESS_WAIT_MS,
+        description: "How long to wait for a terminal status before returning pending.",
+      },
+    }),
+    async execute(_id, params) {
+      const clientOptions = accessClientOptions();
+      const response = await createAccessRequest(createAccessRequestBody(params), clientOptions);
+      const timeoutMs = clampWaitTimeout(
+        readNumberProperty(params, "wait_timeout_ms"),
+        DEFAULT_ACCESS_WAIT_MS,
+      );
+      return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
+    },
+  });
+
+  api.registerTool({
+    name: "check_resource_access",
+    description:
+      "Check or continue waiting for a NemoClaw access request. This reports status only and cannot approve or modify access.",
+    parameters: accessToolParameters(["request_id"], {
+      request_id: {
+        type: "string",
+        description: "The request_id returned by request_resource_access.",
+      },
+      wait_timeout_ms: {
+        type: "number",
+        minimum: 0,
+        maximum: MAX_ACCESS_WAIT_MS,
+        default: 0,
+        description: "Optional time to wait for a terminal status before returning pending.",
+      },
+    }),
+    async execute(_id, params) {
+      const requestId = readStringProperty(params, "request_id");
+      if (!requestId) {
+        return {
+          request_id: "",
+          status: "failed",
+          message: "Missing request_id.",
+        };
+      }
+
+      const clientOptions = accessClientOptions();
+      const response = await getAccessRequest(requestId, clientOptions);
+      const timeoutMs = clampWaitTimeout(readNumberProperty(params, "wait_timeout_ms"), 0);
+      return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
+    },
+  });
 
   // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
   // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract

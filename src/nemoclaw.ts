@@ -2457,16 +2457,16 @@ async function sandboxAccess(sandboxName: string, args: string[] = []): Promise<
         reason: "Operator approved; applying policy preset.",
       });
       try {
-        const applied = policies.applyPreset(sandboxName, record.preset);
-        if (!applied) {
+        const applied = policies.applyPresetWithResult(sandboxName, record.preset);
+        if (!applied.ok) {
           accessRequests.transitionAccessRequest(sandboxName, requestId, "failed", {
-            reason: "Policy preset application failed.",
+            reason: applied.message,
           });
-          console.error(`  Failed to apply preset '${record.preset}'.`);
+          console.error(`  Failed to apply preset '${record.preset}': ${applied.message}`);
           process.exit(1);
         }
         accessRequests.transitionAccessRequest(sandboxName, requestId, "applied", {
-          reason: "OpenShell policy update completed through NemoClaw preset flow.",
+          reason: applied.message,
         });
         console.log(`  Applied access request: ${requestId}`);
       } catch (err: unknown) {
