@@ -175,6 +175,12 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "sandbox",
   },
   {
+    usage: "nemoclaw access tui",
+    description: "Open the agent resource access approval inbox",
+    group: "Policy Presets",
+    scope: "global",
+  },
+  {
     usage: "nemoclaw <name> access inbox",
     description: "Review pending agent resource access requests",
     group: "Policy Presets",

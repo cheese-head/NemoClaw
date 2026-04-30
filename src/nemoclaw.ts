@@ -2333,6 +2333,7 @@ function sandboxPolicyList(sandboxName: string) {
 
 type AccessRequestCliRecord = {
   id: string;
+  sandbox_id?: string;
   preset: string;
   access: string;
   duration: string;
@@ -2346,8 +2347,13 @@ type AccessRequestCliRecord = {
   updated_at: string;
 };
 
+type AccessRequestInboxItem = AccessRequestCliRecord & {
+  sandbox_id: string;
+};
+
 function printAccessRequest(record: AccessRequestCliRecord): void {
   console.log(`  Request:  ${record.id}`);
+  if (record.sandbox_id) console.log(`  Sandbox:  ${record.sandbox_id}`);
   console.log(`  Status:   ${record.status}`);
   console.log("  Canonical request (verified by NemoClaw)");
   console.log(`    Preset:   ${record.preset}`);
@@ -2364,6 +2370,246 @@ function printAccessRequest(record: AccessRequestCliRecord): void {
     console.log("  Agent-claimed text [untrusted]");
     if (record.user_intent) console.log(`    Intent: ${record.user_intent}`);
     if (record.reason) console.log(`    Reason: ${record.reason}`);
+  }
+}
+
+function readAllAccessRequestItems(): AccessRequestInboxItem[] {
+  const items: AccessRequestInboxItem[] = [];
+  const known = new Set<string>();
+  for (const sandbox of registry.listSandboxes().sandboxes ?? []) {
+    if (typeof sandbox.name === "string") known.add(sandbox.name);
+  }
+  const stateDir = accessRequests.accessRequestStateDir();
+  if (fs.existsSync(stateDir)) {
+    for (const entry of fs.readdirSync(stateDir)) {
+      if (!entry.endsWith(".json") || entry.endsWith(".audit.json")) continue;
+      known.add(decodeURIComponent(entry.slice(0, -".json".length)));
+    }
+  }
+
+  for (const sandboxName of [...known].sort()) {
+    const state = accessRequests.readAccessRequestState(sandboxName);
+    for (const request of state.requests ?? []) {
+      items.push({
+        ...(request as AccessRequestCliRecord),
+        sandbox_id: request.sandbox_id || sandboxName,
+      });
+    }
+  }
+  return items.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+}
+
+function isPendingAccessStatus(status: string): boolean {
+  return status === "pending" || status === "pending_approval" || status === "pending_activation";
+}
+
+function renderAccessInboxRow(item: AccessRequestInboxItem, selected: boolean): string {
+  const arrow = selected ? ">" : " ";
+  const status =
+    item.status === "pending" ? "pending_approval" : item.status.padEnd(16).slice(0, 16);
+  const sandbox = item.sandbox_id.padEnd(18).slice(0, 18);
+  const preset = item.preset.padEnd(10).slice(0, 10);
+  const task = (item.task_id || "(none)").padEnd(16).slice(0, 16);
+  return `   ${arrow} ${status.padEnd(16)} ${sandbox} ${preset} ${item.access.padEnd(10).slice(0, 10)} ${task}`;
+}
+
+function renderAccessInboxLines(items: AccessRequestInboxItem[], cursor: number): string[] {
+  const G = _useColor ? G_GREEN() : "";
+  const D = _useColor ? D_DIM() : "";
+  const R0 = _useColor ? R : "";
+  const lines = ["  Agent resource access inbox"];
+  lines.push("  status           sandbox            preset     access     task");
+  lines.push("  " + "─".repeat(72));
+  if (items.length === 0) {
+    lines.push("    No access requests found.");
+  } else {
+    items.forEach((item, index) => lines.push(renderAccessInboxRow(item, index === cursor)));
+  }
+  lines.push("");
+  lines.push(
+    _useColor
+      ? `  ${G}↑/↓ j/k${R0} ${D}move${R0}  ${G}a${R0} ${D}approve${R0}  ${G}d${R0} ${D}deny${R0}  ${G}r${R0} ${D}revoke${R0}  ${G}e${R0} ${D}expire${R0}  ${G}v${R0} ${D}verify audit${R0}  ${G}q${R0} ${D}quit${R0}`
+      : "  ↑/↓ j/k move  a approve  d deny  r revoke  e expire  v verify audit  q quit",
+  );
+  lines.push("  Enter shows details. Agent-claimed text is untrusted.");
+  return lines;
+}
+
+function G_GREEN(): string {
+  return "\x1b[32m";
+}
+
+function D_DIM(): string {
+  return "\x1b[2m";
+}
+
+async function approveAccessRequestFromTui(item: AccessRequestInboxItem): Promise<void> {
+  if (!isPendingAccessStatus(item.status)) {
+    console.log(`  Request '${item.id}' is not pending (status: ${item.status}).`);
+    return;
+  }
+  await sandboxAccess(item.sandbox_id, ["approve", item.id, "--session"]);
+}
+
+async function denyAccessRequestFromTui(item: AccessRequestInboxItem): Promise<void> {
+  if (!isPendingAccessStatus(item.status)) {
+    console.log(`  Request '${item.id}' is not pending (status: ${item.status}).`);
+    return;
+  }
+  const reason = await askPrompt("  Deny reason (optional): ");
+  await sandboxAccess(
+    item.sandbox_id,
+    reason.trim() ? ["deny", item.id, "--reason", reason.trim()] : ["deny", item.id],
+  );
+}
+
+async function revokeAccessRequestFromTui(item: AccessRequestInboxItem): Promise<void> {
+  await sandboxAccess(item.sandbox_id, ["revoke", item.id]);
+}
+
+async function expireAllAccessRequestsFromTui(items: AccessRequestInboxItem[]): Promise<void> {
+  const sandboxes = new Set(items.map((item) => item.sandbox_id));
+  for (const sandboxName of sandboxes) {
+    await sandboxAccess(sandboxName, ["expire"]);
+  }
+}
+
+function verifyAccessAuditsFromTui(items: AccessRequestInboxItem[]): void {
+  const sandboxes = new Set(items.map((item) => item.sandbox_id));
+  for (const sandboxName of sandboxes) {
+    const result = accessRequests.verifyAccessRequestAudit(sandboxName);
+    if (!result.ok) {
+      console.error(`  ${sandboxName}: audit verification failed: ${result.error}`);
+    } else {
+      console.log(
+        `  ${sandboxName}: audit verified (${result.records} record(s), head ${result.head_hash ?? "none"})`,
+      );
+    }
+  }
+}
+
+async function globalAccessTui(): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    const items = readAllAccessRequestItems().filter((item) => isPendingAccessStatus(item.status));
+    if (items.length === 0) {
+      console.log("  No pending access requests.");
+      return;
+    }
+    for (const item of items) {
+      console.log("");
+      printAccessRequest(item);
+    }
+    return;
+  }
+
+  let items = readAllAccessRequestItems();
+  let cursor = 0;
+  process.stdout.write("\n");
+  let lines = renderAccessInboxLines(items, cursor);
+  for (const line of lines) process.stdout.write(`${line}\n`);
+  let lineCount = lines.length;
+
+  const redraw = () => {
+    items = readAllAccessRequestItems();
+    if (cursor >= items.length) cursor = Math.max(0, items.length - 1);
+    process.stdout.write(`\x1b[${lineCount}A`);
+    lines = renderAccessInboxLines(items, cursor);
+    for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
+    lineCount = lines.length;
+  };
+
+  const suspendRaw = () => {
+    process.stdin.setRawMode(false);
+    process.stdin.pause();
+  };
+  const resumeRaw = () => {
+    if (typeof process.stdin.ref === "function") process.stdin.ref();
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+  };
+  const cleanup = () => {
+    process.stdin.setRawMode(false);
+    process.stdin.pause();
+    if (typeof process.stdin.unref === "function") process.stdin.unref();
+    process.stdin.removeListener("data", onData);
+    process.removeListener("SIGTERM", onSigterm);
+  };
+  const runAction = async (action: () => Promise<void> | void) => {
+    process.stdin.removeListener("data", onData);
+    suspendRaw();
+    process.stdout.write("\n");
+    await action();
+    process.stdout.write("\n  Press any key to return to the access inbox...");
+    resumeRaw();
+    await new Promise<void>((resolve) => process.stdin.once("data", () => resolve()));
+    process.stdin.on("data", onData);
+    redraw();
+  };
+  const onSigterm = () => {
+    cleanup();
+    process.exit(1);
+  };
+  const onData = (key: string) => {
+    void (async () => {
+      if (key === "\x03" || key === "q" || key === "Q") {
+        cleanup();
+        process.stdout.write("\n");
+        return;
+      }
+      if (key === "\x1b[A" || key === "k") {
+        cursor = items.length === 0 ? 0 : (cursor - 1 + items.length) % items.length;
+        redraw();
+      } else if (key === "\x1b[B" || key === "j") {
+        cursor = items.length === 0 ? 0 : (cursor + 1) % items.length;
+        redraw();
+      } else if (key === "\r" || key === "\n") {
+        const item = items[cursor];
+        if (item) await runAction(() => printAccessRequest(item));
+      } else if (key === "a" || key === "A") {
+        const item = items[cursor];
+        if (item) await runAction(() => approveAccessRequestFromTui(item));
+      } else if (key === "d" || key === "D") {
+        const item = items[cursor];
+        if (item) await runAction(() => denyAccessRequestFromTui(item));
+      } else if (key === "r" || key === "R") {
+        const item = items[cursor];
+        if (item) await runAction(() => revokeAccessRequestFromTui(item));
+      } else if (key === "e" || key === "E") {
+        await runAction(() => expireAllAccessRequestsFromTui(items));
+      } else if (key === "v" || key === "V") {
+        await runAction(() => verifyAccessAuditsFromTui(items));
+      }
+    })();
+  };
+
+  process.once("SIGTERM", onSigterm);
+  resumeRaw();
+  process.stdin.on("data", onData);
+}
+
+async function globalAccess(args: string[]): Promise<void> {
+  const subcommand = args[0] || "tui";
+  switch (subcommand) {
+    case "tui":
+      await globalAccessTui();
+      return;
+    case "inbox": {
+      const items = readAllAccessRequestItems().filter((item) => isPendingAccessStatus(item.status));
+      if (items.length === 0) {
+        console.log("  No pending access requests.");
+        return;
+      }
+      for (const item of items) {
+        console.log("");
+        printAccessRequest(item);
+      }
+      return;
+    }
+    default:
+      console.error(`  Unknown access subcommand: ${subcommand}`);
+      console.error("  Usage: nemoclaw access <tui|inbox>");
+      process.exit(1);
   }
 }
 
@@ -4451,6 +4697,9 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "credentials":
         await credentialsCommand(args);
+        break;
+      case "access":
+        await globalAccess(args);
         break;
       case "list":
         await listSandboxes();
