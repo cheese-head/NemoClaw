@@ -174,6 +174,32 @@ export const COMMANDS: readonly CommandDef[] = [
     group: "Policy Presets",
     scope: "sandbox",
   },
+  {
+    usage: "nemoclaw <name> access inbox",
+    description: "Review pending agent resource access requests",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> access status",
+    description: "Show an agent resource access request",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> access approve",
+    description: "Approve a task-scoped agent resource access request",
+    flags: "<request-id> --session",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> access deny",
+    description: "Deny an agent resource access request",
+    flags: "<request-id> [--reason <text>]",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
 
   // ── Messaging Channels ──
   {
@@ -401,7 +427,6 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "global",
     hidden: true,
   },
-
 ] as const;
 
 /** All global-scope commands. */

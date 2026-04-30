@@ -46,6 +46,7 @@ const registry = require("./lib/registry");
 import type { SandboxEntry } from "./lib/registry";
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+const accessRequests = require("./lib/access-requests");
 const shields = require("./lib/shields");
 const sandboxConfig = require("./lib/sandbox-config");
 const { parseGatewayInference } = require("./lib/inference-config");
@@ -2329,6 +2330,162 @@ function sandboxPolicyList(sandboxName: string) {
   console.log("");
 }
 
+type AccessRequestCliRecord = {
+  id: string;
+  preset: string;
+  access: string;
+  duration: string;
+  task_id: string;
+  status: string;
+  user_intent?: string;
+  reason?: string;
+  ceiling_reason?: string;
+  status_reason?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+function printAccessRequest(record: AccessRequestCliRecord): void {
+  console.log(`  Request:  ${record.id}`);
+  console.log(`  Status:   ${record.status}`);
+  console.log("  Canonical request (verified by NemoClaw)");
+  console.log(`    Preset:   ${record.preset}`);
+  console.log(`    Scope:    ${record.access} (advisory; actual scope is the preset)`);
+  console.log(`    Duration: ${record.duration}`);
+  console.log(`    Task:     ${record.task_id || "(none)"}`);
+  console.log(`    Created:  ${record.created_at}`);
+  console.log(`    Updated:  ${record.updated_at}`);
+  const reason = record.ceiling_reason || record.status_reason;
+  if (reason) {
+    console.log(`  Reason:   ${reason}`);
+  }
+  if (record.user_intent || record.reason) {
+    console.log("  Agent-claimed text [untrusted]");
+    if (record.user_intent) console.log(`    Intent: ${record.user_intent}`);
+    if (record.reason) console.log(`    Reason: ${record.reason}`);
+  }
+}
+
+function getAccessRequestOrExit(sandboxName: string, requestId: string): AccessRequestCliRecord {
+  const state = accessRequests.readAccessRequestState(sandboxName);
+  const record = state.requests.find(
+    (candidate: AccessRequestCliRecord) => candidate.id === requestId,
+  );
+  if (!record) {
+    console.error(`  Access request not found: ${requestId}`);
+    process.exit(1);
+  }
+  return record;
+}
+
+async function sandboxAccess(sandboxName: string, args: string[] = []): Promise<void> {
+  const subcommand = args[0] || "inbox";
+  const subArgs = args.slice(1);
+
+  switch (subcommand) {
+    case "inbox": {
+      const state = accessRequests.readAccessRequestState(sandboxName);
+      const pending = state.requests.filter((request: AccessRequestCliRecord) =>
+        ["pending", "pending_activation"].includes(request.status),
+      );
+      if (pending.length === 0) {
+        console.log(`  No pending access requests for sandbox '${sandboxName}'.`);
+        return;
+      }
+      console.log(`  Pending access requests for sandbox '${sandboxName}':`);
+      for (const request of pending) {
+        console.log("");
+        printAccessRequest(request);
+      }
+      return;
+    }
+    case "status": {
+      const requestId = subArgs[0];
+      if (!requestId || requestId.startsWith("--")) {
+        console.error("  Usage: nemoclaw <name> access status <request-id>");
+        process.exit(1);
+      }
+      printAccessRequest(getAccessRequestOrExit(sandboxName, requestId));
+      return;
+    }
+    case "deny": {
+      const requestId = subArgs[0];
+      if (!requestId || requestId.startsWith("--")) {
+        console.error("  Usage: nemoclaw <name> access deny <request-id> [--reason <text>]");
+        process.exit(1);
+      }
+      let reason = "";
+      for (let i = 1; i < subArgs.length; i++) {
+        if (subArgs[i] === "--reason") {
+          if (i + 1 >= subArgs.length || subArgs[i + 1].startsWith("--")) {
+            console.error("  --reason requires a value");
+            process.exit(1);
+          }
+          reason = subArgs[++i];
+        } else {
+          console.error(`  Unknown flag: ${subArgs[i]}`);
+          process.exit(1);
+        }
+      }
+      const denied = accessRequests.transitionAccessRequest(sandboxName, requestId, "denied", {
+        reason,
+      });
+      console.log(`  Denied access request: ${denied.id}`);
+      return;
+    }
+    case "approve": {
+      const requestId = subArgs[0];
+      if (!requestId || requestId.startsWith("--")) {
+        console.error("  Usage: nemoclaw <name> access approve <request-id> --session");
+        process.exit(1);
+      }
+      if (!subArgs.includes("--session")) {
+        console.error("  Access approvals in v1 must be task-scoped: pass --session.");
+        process.exit(1);
+      }
+      const record = getAccessRequestOrExit(sandboxName, requestId);
+      if (record.status !== "pending") {
+        console.error(`  Access request '${requestId}' is not pending (status: ${record.status}).`);
+        process.exit(1);
+      }
+      if (record.duration !== "session") {
+        console.error("  Persistent grants are not supported in v1.");
+        process.exit(1);
+      }
+
+      accessRequests.transitionAccessRequest(sandboxName, requestId, "pending_activation", {
+        reason: "Operator approved; applying policy preset.",
+      });
+      try {
+        const applied = policies.applyPreset(sandboxName, record.preset);
+        if (!applied) {
+          accessRequests.transitionAccessRequest(sandboxName, requestId, "failed", {
+            reason: "Policy preset application failed.",
+          });
+          console.error(`  Failed to apply preset '${record.preset}'.`);
+          process.exit(1);
+        }
+        accessRequests.transitionAccessRequest(sandboxName, requestId, "applied", {
+          reason: "OpenShell policy update completed through NemoClaw preset flow.",
+        });
+        console.log(`  Applied access request: ${requestId}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        accessRequests.transitionAccessRequest(sandboxName, requestId, "failed", {
+          reason: message,
+        });
+        console.error(`  Failed to apply access request '${requestId}': ${message}`);
+        process.exit(1);
+      }
+      return;
+    }
+    default:
+      console.error(`  Unknown access subcommand: ${subcommand}`);
+      console.error("  Usage: nemoclaw <name> access <inbox|status|approve|deny> [args]");
+      process.exit(1);
+  }
+}
+
 // ── Messaging channels ───────────────────────────────────────────
 
 function sandboxChannelsList(sandboxName: string) {
@@ -4326,6 +4483,9 @@ const [cmd, ...args] = process.argv.slice(2);
       case "policy-list":
         sandboxPolicyList(cmd);
         break;
+      case "access":
+        await sandboxAccess(cmd, actionArgs);
+        break;
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
@@ -4506,7 +4666,7 @@ const [cmd, ...args] = process.argv.slice(2);
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, gateway-token, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, access, skill, snapshot, rebuild, shields, config, channels, gateway-token, destroy`,
         );
         process.exit(1);
     }

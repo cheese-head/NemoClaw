@@ -17,10 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 47 commands", () => {
+    it("should contain exactly 51 commands", () => {
       // 23 global (18 visible + 5 hidden help/version aliases)
-      // 24 sandbox (18 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(47);
+      // 28 sandbox (22 visible + 6 hidden shields/config)
+      expect(COMMANDS).toHaveLength(51);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -52,9 +52,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 24 entries", () => {
-      // 18 visible + 6 hidden (shields×3 + config×3)
-      expect(sandboxCommands()).toHaveLength(24);
+    it("should return exactly 28 entries", () => {
+      // 22 visible + 6 hidden (shields×3 + config×3)
+      expect(sandboxCommands()).toHaveLength(28);
     });
 
     it("every entry has scope sandbox", () => {
@@ -65,10 +65,10 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 11 hidden commands (36 visible)", () => {
+    it("should exclude 11 hidden commands (40 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
       // 6 hidden sandbox (shields×3, config×3)
-      expect(visibleCommands()).toHaveLength(36);
+      expect(visibleCommands()).toHaveLength(40);
     });
 
     it("no visible command has hidden=true", () => {
@@ -167,9 +167,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 15 unique action tokens including empty string", () => {
+    it("returns exactly 16 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(15);
+      expect(tokens).toHaveLength(16);
       // Must contain the same set as the old sandboxActions array
       const expected = new Set([
         "connect",
@@ -178,6 +178,7 @@ describe("command-registry", () => {
         "policy-add",
         "policy-remove",
         "policy-list",
+        "access",
         "destroy",
         "skill",
         "rebuild",
