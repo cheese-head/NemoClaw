@@ -138,6 +138,12 @@ const {
   };
 };
 const { sleepSeconds } = require("./wait");
+const {
+  createSandboxControlPlaneIdentity,
+  defaultControlPlaneServername,
+  sandboxControlPlaneEnv,
+  cleanupSandboxControlPlaneIdentity,
+} = require("./control-plane-identity");
 const platformUtils: typeof import("./platform") = require("./platform");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
 const { resolveOpenshell } = require("./resolve-openshell");
@@ -3696,6 +3702,7 @@ async function createSandbox(
 
     // Destroy old sandbox and clean up its host-side Docker image.
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+    cleanupSandboxControlPlaneIdentity(sandboxName);
     if (previousEntry?.imageTag) {
       const rmiResult = dockerRmi(previousEntry.imageTag, {
         ignoreError: true,
@@ -3954,6 +3961,17 @@ async function createSandbox(
   // 18789 and the gateway listens on the wrong port. (#2267, #1925)
   const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
   envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
+  const controlUrl = process.env.NEMOCLAW_CONTROL_URL;
+  if (controlUrl) {
+    const controlIdentity = createSandboxControlPlaneIdentity(sandboxName, {
+      controlUrl,
+      servername:
+        process.env.NEMOCLAW_CONTROL_SERVERNAME || defaultControlPlaneServername(controlUrl),
+    });
+    for (const [key, value] of Object.entries(sandboxControlPlaneEnv(controlIdentity))) {
+      envArgs.push(formatEnvAssignment(key, String(value)));
+    }
+  }
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
   // sandbox container. patchStagedDockerfile() already substitutes them
   // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create
@@ -4066,6 +4084,7 @@ async function createSandbox(
     // Clean up the orphaned sandbox so the next onboard retry with the same
     // name doesn't fail on "sandbox already exists".
     const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+    cleanupSandboxControlPlaneIdentity(sandboxName);
     console.error("");
     console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
     if (delResult.status === 0) {

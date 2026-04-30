@@ -422,8 +422,14 @@ function accessClientOptions(): AccessClientOptions {
   if (!controlUrl) {
     throw new Error("NEMOCLAW_CONTROL_URL is required for NemoClaw mTLS control access.");
   }
+  const caPemB64 = process.env.NEMOCLAW_CONTROL_CA_PEM_B64;
+  const certPemB64 = process.env.NEMOCLAW_CONTROL_CERT_PEM_B64;
+  const keyPemB64 = process.env.NEMOCLAW_CONTROL_KEY_PEM_B64;
   return {
     controlUrl,
+    ...(caPemB64 ? { ca: Buffer.from(caPemB64, "base64").toString("utf-8") } : {}),
+    ...(certPemB64 ? { cert: Buffer.from(certPemB64, "base64").toString("utf-8") } : {}),
+    ...(keyPemB64 ? { key: Buffer.from(keyPemB64, "base64").toString("utf-8") } : {}),
     ...(process.env.NEMOCLAW_CONTROL_CA_PATH
       ? { caPath: process.env.NEMOCLAW_CONTROL_CA_PATH }
       : {}),

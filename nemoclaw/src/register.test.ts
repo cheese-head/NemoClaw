@@ -69,6 +69,9 @@ describe("plugin registration", () => {
     mockedCreateAccessRequest.mockReset();
     mockedGetAccessRequest.mockReset();
     process.env.NEMOCLAW_CONTROL_URL = CONTROL_OPTIONS.controlUrl;
+    delete process.env.NEMOCLAW_CONTROL_CA_PEM_B64;
+    delete process.env.NEMOCLAW_CONTROL_CERT_PEM_B64;
+    delete process.env.NEMOCLAW_CONTROL_KEY_PEM_B64;
     delete process.env.NEMOCLAW_CONTROL_CA_PATH;
     delete process.env.NEMOCLAW_CONTROL_CERT_PATH;
     delete process.env.NEMOCLAW_CONTROL_KEY_PATH;

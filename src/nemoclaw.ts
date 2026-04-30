@@ -47,6 +47,7 @@ import type { SandboxEntry } from "./lib/registry";
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const accessRequests = require("./lib/access-requests");
+const { cleanupSandboxControlPlaneIdentity } = require("./lib/control-plane-identity");
 const shields = require("./lib/shields");
 const sandboxConfig = require("./lib/sandbox-config");
 const { parseGatewayInference } = require("./lib/inference-config");
@@ -3156,6 +3157,7 @@ async function sandboxDestroy(sandboxName: string, args: string[] = []): Promise
     !!registry.getSandbox(sandboxName);
 
   cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
+  cleanupSandboxControlPlaneIdentity(sandboxName);
   removeSandboxImage(sandboxName);
 
   const removed = registry.removeSandbox(sandboxName);
