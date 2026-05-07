@@ -164,6 +164,25 @@ network_policies:
       - { path: /usr/bin/curl }
       - { path: /usr/bin/python3 }
 
+  # ── NemoClaw access-control callback ────────────────────────────────
+  # The NemoClaw plugin runs inside OpenClaw, but access grants are approved
+  # and applied by the host-side NemoClaw control plane. This narrow mTLS
+  # callback lets the plugin submit/check access requests without opening
+  # arbitrary host services to the agent.
+  nemoclaw_access_control:
+    name: nemoclaw_access_control
+    endpoints:
+      - host: host.openshell.internal
+        port: 19443
+        tls: skip
+        access: full
+      - host: 172.17.0.1
+        port: 19443
+        tls: skip
+        access: full
+    binaries:
+      - { path: /** }
+
   # NOTE: github.com / api.github.com and the git/gh binaries used to
   # live in this base policy and were therefore granted to every
   # sandbox regardless of user opt-in. They have been moved into a

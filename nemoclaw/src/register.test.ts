@@ -4,10 +4,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { OpenClawPluginApi, PluginToolDefinition } from "./index.js";
 
-vi.mock("node:child_process", () => ({
-  execFileSync: vi.fn(),
-}));
-
 vi.mock("./onboard/config.js", () => ({
   loadOnboardConfig: vi.fn(),
   describeOnboardEndpoint: vi.fn(() => "build.nvidia.com"),
@@ -17,17 +13,25 @@ vi.mock("./onboard/config.js", () => ({
 vi.mock("./access-client.js", () => ({
   createAccessRequest: vi.fn(),
   getAccessRequest: vi.fn(),
+  listAccessPresets: vi.fn(),
 }));
 
-import { execFileSync } from "node:child_process";
+vi.mock("./access-denials.js", () => ({
+  readRecentAccessDenials: vi.fn(),
+  findRecentAccessDenial: vi.fn(),
+}));
+
 import register, { getPluginConfig } from "./index.js";
 import { loadOnboardConfig } from "./onboard/config.js";
-import { createAccessRequest, getAccessRequest } from "./access-client.js";
+import { createAccessRequest, getAccessRequest, listAccessPresets } from "./access-client.js";
+import { findRecentAccessDenial, readRecentAccessDenials } from "./access-denials.js";
 
-const mockedExecFileSync = vi.mocked(execFileSync);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 const mockedCreateAccessRequest = vi.mocked(createAccessRequest);
 const mockedGetAccessRequest = vi.mocked(getAccessRequest);
+const mockedListAccessPresets = vi.mocked(listAccessPresets);
+const mockedReadRecentAccessDenials = vi.mocked(readRecentAccessDenials);
+const mockedFindRecentAccessDenial = vi.mocked(findRecentAccessDenial);
 const CONTROL_OPTIONS = {
   controlUrl: "https://nemoclaw-control.local",
 };
@@ -64,10 +68,12 @@ function getRegisteredTool(api: OpenClawPluginApi, name: string): PluginToolDefi
 describe("plugin registration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedExecFileSync.mockReset();
     mockedLoadOnboardConfig.mockReturnValue(null);
     mockedCreateAccessRequest.mockReset();
     mockedGetAccessRequest.mockReset();
+    mockedListAccessPresets.mockReset();
+    mockedReadRecentAccessDenials.mockReset();
+    mockedFindRecentAccessDenial.mockReset();
     process.env.NEMOCLAW_CONTROL_URL = CONTROL_OPTIONS.controlUrl;
     delete process.env.NEMOCLAW_CONTROL_CA_PEM_B64;
     delete process.env.NEMOCLAW_CONTROL_CERT_PEM_B64;
@@ -98,7 +104,16 @@ describe("plugin registration", () => {
       expect.objectContaining({ name: "request_resource_access" }),
     );
     expect(api.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "list_resource_access_presets" }),
+    );
+    expect(api.registerTool).toHaveBeenCalledWith(
       expect.objectContaining({ name: "check_resource_access" }),
+    );
+    expect(api.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "get_recent_access_denials" }),
+    );
+    expect(api.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "request_access_for_denial" }),
     );
   });
 
@@ -119,6 +134,28 @@ describe("plugin registration", () => {
           maximum: 300_000,
         },
       },
+    });
+  });
+
+  it("list_resource_access_presets returns presets from the host control plane", async () => {
+    mockedListAccessPresets.mockResolvedValue({
+      presets: [
+        { name: "github", description: "GitHub access" },
+        { name: "pypi", description: "Python Package Index access" },
+      ],
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "list_resource_access_presets");
+    const result = await tool.execute("call_1", {});
+
+    expect(mockedListAccessPresets).toHaveBeenCalledWith(CONTROL_OPTIONS);
+    expect(result).toEqual({
+      presets: [
+        { name: "github", description: "GitHub access" },
+        { name: "pypi", description: "Python Package Index access" },
+      ],
     });
   });
 
@@ -170,6 +207,35 @@ describe("plugin registration", () => {
         duration: "session",
       },
     });
+  });
+
+  it("request_resource_access normalizes GitHub host aliases to the github preset", async () => {
+    mockedCreateAccessRequest.mockResolvedValue({
+      request_id: "req_123",
+      status: "pending",
+      canonical_request: {
+        preset: "github",
+      },
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "request_resource_access");
+    await tool.execute("call_1", {
+      user_intent: "I want access to GitHub",
+      resource: "github.com",
+      reason: "Inspect a repository.",
+      wait_timeout_ms: 0,
+    });
+
+    expect(mockedCreateAccessRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        llm_proposal: expect.objectContaining({
+          preset: "github",
+        }),
+      }),
+      CONTROL_OPTIONS,
+    );
   });
 
   it("request_resource_access returns pending with request_id when wait timeout is exhausted", async () => {
@@ -225,6 +291,82 @@ describe("plugin registration", () => {
     });
   });
 
+  it("get_recent_access_denials returns structured denials with suggested access", async () => {
+    mockedReadRecentAccessDenials.mockReturnValue([
+      {
+        version: "nemoclaw.denial.v1",
+        id: "denial-1",
+        kind: "network_policy_denial",
+        observed_at: "2026-05-06T14:00:00.000Z",
+        observed: { method: "GET", host: "api.github.com" },
+        suggested_access: { resource: "github", access: "read", duration: "session" },
+        user_message: "GitHub access is blocked by the current sandbox policy.",
+      },
+    ]);
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "get_recent_access_denials");
+    const result = await tool.execute("call_3", { limit: 1 });
+
+    expect(mockedReadRecentAccessDenials).toHaveBeenCalledWith({ limit: 1 });
+    expect(result).toEqual({
+      denials: [
+        expect.objectContaining({
+          id: "denial-1",
+          suggested_access: { resource: "github", access: "read", duration: "session" },
+        }),
+      ],
+    });
+  });
+
+  it("request_access_for_denial uses suggested access from a structured denial", async () => {
+    mockedFindRecentAccessDenial.mockReturnValue({
+      version: "nemoclaw.denial.v1",
+      id: "denial-1",
+      kind: "network_policy_denial",
+      observed_at: "2026-05-06T14:00:00.000Z",
+      observed: { method: "GET", host: "api.github.com" },
+      openshell: { detail: "request denied by policy" },
+      suggested_access: { resource: "github", access: "read", duration: "session" },
+      user_message: "GitHub access is blocked by the current sandbox policy.",
+    });
+    mockedCreateAccessRequest.mockResolvedValue({
+      request_id: "req_from_denial",
+      status: "pending_approval",
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "request_access_for_denial");
+    const result = await tool.execute("call_4", {
+      denial_id: "denial-1",
+      wait_timeout_ms: 0,
+    });
+
+    expect(mockedCreateAccessRequest).toHaveBeenCalledWith(
+      {
+        version: "nemoclaw.access.v1",
+        task_id: "denial-1",
+        user_intent: "GitHub access is blocked by the current sandbox policy.",
+        llm_proposal: {
+          resource_type: "network",
+          preset: "github",
+          access: "read",
+          duration: "session",
+          reason: "request denied by policy",
+        },
+      },
+      CONTROL_OPTIONS,
+    );
+    expect(result).toEqual({
+      request_id: "req_from_denial",
+      status: "pending_approval",
+      message:
+        "Access request is still pending; call check_resource_access with the request_id to continue polling.",
+    });
+  });
+
   it("does NOT register CLI commands", () => {
     const api = createMockApi();
     // registerCli should not exist on the API interface after removal
@@ -270,16 +412,17 @@ describe("plugin registration", () => {
     ]);
   });
 
-  it("uses probed OpenShell provider and model when onboard config is unavailable", () => {
-    mockedExecFileSync.mockReturnValue(
-      JSON.stringify({
-        provider: "Ollama",
-        endpoint: "http://host.docker.internal:11434/v1",
-        model: "llama3.2:latest",
-      }),
-    );
-
+  it("uses OpenClaw config model when onboard config is unavailable", () => {
     const api = createMockApi();
+    api.config = {
+      agents: {
+        defaults: {
+          model: {
+            primary: "inference/llama3.2:latest",
+          },
+        },
+      },
+    };
     register(api);
 
     const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
@@ -291,10 +434,6 @@ describe("plugin registration", () => {
     ]);
 
     const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
-    expect(
-      logLines.some((line) => line.includes("Endpoint:  http://host.docker.internal:11434/v1")),
-    ).toBe(true);
-    expect(logLines.some((line) => line.includes("Provider:  Ollama"))).toBe(true);
     expect(logLines.some((line) => line.includes("Model:     llama3.2:latest"))).toBe(true);
   });
 
@@ -308,15 +447,17 @@ describe("plugin registration", () => {
       credentialEnv: "NVIDIA_API_KEY",
       onboardedAt: "2026-03-01T00:00:00.000Z",
     });
-    mockedExecFileSync.mockReturnValue(
-      JSON.stringify({
-        provider: "NVIDIA",
-        endpoint: "https://api.build.nvidia.com/v1",
-        model: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-      }),
-    );
 
     const api = createMockApi();
+    api.config = {
+      agents: {
+        defaults: {
+          model: {
+            primary: "inference/nvidia/llama-3.3-nemotron-super-49b-v1.5",
+          },
+        },
+      },
+    };
     register(api);
 
     const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
@@ -331,14 +472,16 @@ describe("plugin registration", () => {
   });
 
   it("does not treat the provider name as a fallback endpoint", () => {
-    mockedExecFileSync.mockReturnValue(
-      JSON.stringify({
-        provider: "Ollama",
-        model: "llama3.2:latest",
-      }),
-    );
-
     const api = createMockApi();
+    api.config = {
+      agents: {
+        defaults: {
+          model: {
+            primary: "inference/llama3.2:latest",
+          },
+        },
+      },
+    };
     register(api);
 
     const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);

@@ -260,8 +260,9 @@ export function stopAll(opts: ServiceOptions = {}): void {
 
 export function defaultAccessControlServiceInfo(): AccessControlServiceInfo {
   const port = process.env.NEMOCLAW_ACCESS_CONTROL_PORT ?? "19443";
+  const connectHost = process.env.NEMOCLAW_CONTROL_CONNECT_HOST ?? "172.17.0.1";
   return {
-    url: process.env.NEMOCLAW_CONTROL_URL ?? `https://host.openshell.internal:${port}`,
+    url: process.env.NEMOCLAW_CONTROL_URL ?? `https://${connectHost}:${port}`,
     servername: process.env.NEMOCLAW_CONTROL_SERVERNAME ?? "nemoclaw-control.local",
   };
 }

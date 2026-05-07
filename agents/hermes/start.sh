@@ -107,6 +107,8 @@ install_configure_guard() {
   local snippet
   read -r -d '' snippet <<'GUARD' || true
 # nemoclaw-configure-guard begin
+[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh
+
 hermes() {
   case "$1" in
     setup|doctor)
@@ -252,6 +254,17 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_WRITABLE}"
 PROXYEOF
+  for key in \
+    NEMOCLAW_CONTROL_URL \
+    NEMOCLAW_CONTROL_SERVERNAME \
+    NEMOCLAW_CONTROL_CA_PEM_B64 \
+    NEMOCLAW_CONTROL_CERT_PEM_B64 \
+    NEMOCLAW_CONTROL_KEY_PEM_B64 \
+    NEMOCLAW_PLUGIN_ATTESTATION; do
+    if [ -n "${!key:-}" ]; then
+      printf 'export %s=%q\n' "$key" "${!key}"
+    fi
+  done
 } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
 
 # ── Main ─────────────────────────────────────────────────────────

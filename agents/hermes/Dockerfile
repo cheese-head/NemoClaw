@@ -85,13 +85,20 @@ RUN mkdir -p /sandbox/.hermes-data/plugins/nemoclaw \
 # Write a default SOUL.md for the sandboxed agent.
 # Hermes's ensure_hermes_home() expects SOUL.md in the home directory
 # (/sandbox/.hermes/), which is immutable. Write the content to the
-# writable data dir and symlink from the immutable dir.
-RUN printf '%s\n' \
+# writable data dir and symlink from the immutable dir. The CLI prompt
+# history file follows the same pattern so interactive Hermes sessions can
+# append history without mutating the immutable config directory.
+RUN mkdir -p /sandbox/.hermes-data/memories \
+    && printf '%s\n' \
     'You are a helpful AI assistant running inside an NVIDIA OpenShell sandbox.' \
     'Your inference is routed through NemoClaw. You have access to terminal,' \
     'file, and web tools. Be concise and helpful.' \
     > /sandbox/.hermes-data/memories/SOUL.md \
-    && ln -s /sandbox/.hermes-data/memories/SOUL.md /sandbox/.hermes/SOUL.md
+    && touch /sandbox/.hermes-data/.hermes_history \
+    && ln -s /sandbox/.hermes-data/memories/SOUL.md /sandbox/.hermes/SOUL.md \
+    && if [ ! -e /sandbox/.hermes/.hermes_history ]; then \
+        ln -s /sandbox/.hermes-data/.hermes_history /sandbox/.hermes/.hermes_history; \
+    fi
 
 # Lock .hermes via DAC: chown to root so sandbox user cannot modify config.
 # Same pattern as OpenClaw — Landlock provides defense-in-depth.

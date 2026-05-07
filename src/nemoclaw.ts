@@ -47,6 +47,7 @@ import type { SandboxEntry } from "./lib/registry";
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const accessRequests = require("./lib/access-requests");
+const accessTui = require("./lib/access-tui");
 const { cleanupSandboxControlPlaneIdentity } = require("./lib/control-plane-identity");
 const shields = require("./lib/shields");
 const sandboxConfig = require("./lib/sandbox-config");
@@ -2500,6 +2501,15 @@ async function globalAccessTui(): Promise<void> {
       printAccessRequest(item);
     }
     return;
+  }
+
+  try {
+    await accessTui.runPiAccessTui();
+    return;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`  Pi access TUI failed to start: ${message}`);
+    console.error("  Falling back to the legacy access inbox.");
   }
 
   let items = readAllAccessRequestItems();

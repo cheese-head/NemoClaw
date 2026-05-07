@@ -71,4 +71,58 @@ print(json.dumps(result))
     expect(result.reload).toContain("alpha: First skill");
     expect(result.reload).toContain("beta: Second skill");
   });
+
+  it("registers access request tools with Hermes", () => {
+    const output = runPython(`
+import importlib.util
+import json
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+class Ctx:
+    def __init__(self):
+        self.tools = []
+        self.hooks = []
+    def register_tool(self, **kwargs):
+        self.tools.append(kwargs)
+    def register_hook(self, name, handler):
+        self.hooks.append(name)
+    def inject_message(self, *_args, **_kwargs):
+        pass
+
+ctx = Ctx()
+module.register(ctx)
+print(json.dumps({
+    "tools": [tool["name"] for tool in ctx.tools],
+    "request_description": next(
+        tool["schema"]["function"]["description"]
+        for tool in ctx.tools
+        if tool["name"] == "request_resource_access"
+    ),
+}))
+`);
+
+    const result = JSON.parse(output) as {
+      tools: string[];
+      request_description: string;
+    };
+
+    expect(result.tools).toEqual(
+      expect.arrayContaining([
+        "list_resource_access_presets",
+        "request_resource_access",
+        "check_resource_access",
+      ]),
+    );
+    expect(result.request_description).toContain("list_resource_access_presets");
+  });
 });

@@ -1354,6 +1354,217 @@ HTTP_PROXY_FIX_EOF
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT"
 fi
 
+_ACCESS_DENIAL_SCRIPT="/tmp/nemoclaw-access-denial-normalizer.js"
+emit_sandbox_sourced_file "$_ACCESS_DENIAL_SCRIPT" <<'ACCESS_DENIAL_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// access-denial-normalizer.js
+//
+// OpenShell's L7 proxy returns HTTP 403 JSON bodies with
+// { error: "policy_denied", policy, rule, detail }. Most HTTP clients surface
+// those as generic 403 failures. This preload records a stable NemoClaw
+// denial schema so OpenClaw tools can explain the failure and request
+// operator-approved access through the host control plane.
+
+(function () {
+  'use strict';
+
+  var fs = require('fs');
+  var path = require('path');
+  var crypto = require('crypto');
+  var http = require('http');
+  var https = require('https');
+
+  var LOG_PATH = process.env.NEMOCLAW_ACCESS_DENIAL_LOG || '/sandbox/.nemoclaw/access-denials.jsonl';
+  var MAX_RECORDS = 100;
+  var MAX_BODY_BYTES = 64 * 1024;
+
+  function newId() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    return crypto.randomBytes(16).toString('hex');
+  }
+
+  function methodAccess(method) {
+    var m = String(method || 'GET').toUpperCase();
+    return m === 'GET' || m === 'HEAD' || m === 'OPTIONS' ? 'read' : 'read_write';
+  }
+
+  function resourceForHost(host) {
+    var h = String(host || '').toLowerCase();
+    if (h === 'github.com' || h === 'api.github.com' || h.endsWith('.github.com')) return 'github';
+    if (h === 'registry.npmjs.org' || h === 'npmjs.com' || h.endsWith('.npmjs.org')) return 'npm';
+    if (h === 'pypi.org' || h === 'files.pythonhosted.org' || h.endsWith('.pythonhosted.org')) return 'pypi';
+    if (h === 'api.slack.com' || h === 'slack.com' || h.endsWith('.slack.com')) return 'slack';
+    if (h === 'discord.com' || h === 'discordapp.com' || h.endsWith('.discord.com')) return 'discord';
+    if (h === 'api.telegram.org') return 'telegram';
+    if (h === 'huggingface.co' || h.endsWith('.huggingface.co')) return 'huggingface';
+    if (h === 'api.search.brave.com') return 'brave';
+    return '';
+  }
+
+  function observedFrom(method, urlLike) {
+    var observed = { method: String(method || 'GET').toUpperCase() };
+    try {
+      var u = new URL(String(urlLike));
+      observed.url = u.href;
+      observed.host = u.hostname;
+      observed.port = u.port ? Number(u.port) : (u.protocol === 'http:' ? 80 : 443);
+      observed.protocol = u.protocol.replace(/:$/, '');
+    } catch (_) {}
+    return observed;
+  }
+
+  function denialFromProxyBody(body, observed) {
+    if (!body || body.error !== 'policy_denied') return null;
+    var host = observed.host || '';
+    var resource = resourceForHost(host);
+    var denial = {
+      version: 'nemoclaw.denial.v1',
+      id: newId(),
+      kind: 'network_policy_denial',
+      observed_at: new Date().toISOString(),
+      observed: observed,
+      openshell: {
+        policy: typeof body.policy === 'string' ? body.policy : undefined,
+        rule: typeof body.rule === 'string' ? body.rule : undefined,
+        detail: typeof body.detail === 'string' ? body.detail : undefined,
+      },
+      user_message: (host ? host : 'External network access') + ' is blocked by the current sandbox policy.',
+    };
+    if (resource) {
+      denial.suggested_access = {
+        resource: resource,
+        access: methodAccess(observed.method),
+        duration: 'session',
+      };
+    }
+    return denial;
+  }
+
+  function writeDenial(denial) {
+    try {
+      fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
+      var existing = [];
+      if (fs.existsSync(LOG_PATH)) {
+        existing = fs.readFileSync(LOG_PATH, 'utf-8')
+          .split('\n')
+          .filter(function (line) { return line.trim().length > 0; });
+      }
+      existing.push(JSON.stringify(denial));
+      if (existing.length > MAX_RECORDS) existing = existing.slice(existing.length - MAX_RECORDS);
+      fs.writeFileSync(LOG_PATH, existing.join('\n') + '\n', { mode: 0o600 });
+    } catch (err) {
+      try {
+        process.stderr.write('[access-denial] failed to write denial log: ' + (err && err.message || err) + '\n');
+      } catch (_) {}
+    }
+  }
+
+  function parseProxyDenial(raw, observed) {
+    if (!raw || raw.length > MAX_BODY_BYTES) return null;
+    try {
+      return denialFromProxyBody(JSON.parse(raw), observed);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function makeError(denial) {
+    var err = new Error(denial.user_message);
+    err.name = 'NemoClawAccessDeniedError';
+    err.code = 'NEMOCLAW_ACCESS_DENIED';
+    err.nemoclaw = denial;
+    return err;
+  }
+
+  if (typeof globalThis.fetch === 'function') {
+    var originalFetch = globalThis.fetch;
+    globalThis.fetch = async function (input, init) {
+      var method = (init && init.method) || (input && input.method) || 'GET';
+      var urlLike = (typeof input === 'string' || input instanceof URL) ? input : input && input.url;
+      var response = await originalFetch.apply(this, arguments);
+      if (response.status !== 403) return response;
+
+      var clone;
+      try {
+        clone = response.clone();
+      } catch (_) {
+        return response;
+      }
+      var raw = '';
+      try {
+        raw = await clone.text();
+      } catch (_) {
+        return response;
+      }
+      var denial = parseProxyDenial(raw, observedFrom(method, urlLike));
+      if (!denial) return response;
+      writeDenial(denial);
+      throw makeError(denial);
+    };
+  }
+
+  function optionsToObserved(options, defaultProtocol) {
+    var method = options && options.method || 'GET';
+    var protocol = options && options.protocol || defaultProtocol || 'https:';
+    var host = options && (options.hostname || options.host);
+    var pathValue = options && options.path || '/';
+    if (typeof options === 'string' || options instanceof URL) {
+      return observedFrom(method, String(options));
+    }
+    if (host) {
+      var hostText = String(host).replace(/:\d+$/, '');
+      var portText = options && options.port ? ':' + String(options.port) : '';
+      var urlPath = String(pathValue).startsWith('http') ? String(pathValue) : protocol + '//' + hostText + portText + String(pathValue);
+      return observedFrom(method, urlPath);
+    }
+    return { method: String(method || 'GET').toUpperCase() };
+  }
+
+  function captureDeniedResponse(res, observed) {
+    if (!res || res.statusCode !== 403) return;
+    var chunks = [];
+    var total = 0;
+    res.on('data', function (chunk) {
+      if (total > MAX_BODY_BYTES) return;
+      var buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total <= MAX_BODY_BYTES) chunks.push(buf);
+    });
+    res.on('end', function () {
+      var denial = parseProxyDenial(Buffer.concat(chunks).toString('utf-8'), observed);
+      if (denial) writeDenial(denial);
+    });
+  }
+
+  function wrapRequest(mod, defaultProtocol) {
+    var original = mod.request;
+    mod.request = function (options, callback) {
+      var observed = optionsToObserved(options, defaultProtocol);
+      var wrappedCallback = callback;
+      if (typeof callback === 'function') {
+        wrappedCallback = function (res) {
+          captureDeniedResponse(res, observed);
+          return callback.apply(this, arguments);
+        };
+      }
+      var args = Array.prototype.slice.call(arguments);
+      if (wrappedCallback !== callback) args[1] = wrappedCallback;
+      var req = original.apply(mod, args);
+      req.on('response', function (res) {
+        if (typeof callback !== 'function') captureDeniedResponse(res, observed);
+      });
+      return req;
+    };
+  }
+
+  wrapRequest(http, 'http:');
+  wrapRequest(https, 'https:');
+})();
+ACCESS_DENIAL_EOF
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_ACCESS_DENIAL_SCRIPT"
+
 # Nemotron inference parameter injection (NemoClaw#1193, NemoClaw#2051).
 # Nemotron models may return empty content (tool call instead of text) or
 # thinking-only blocks (stalls the conversation) when the model's chat
@@ -1607,6 +1818,7 @@ fi
 # lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
 # curl/wget use uppercase.  gRPC C-core uses lowercase.
 _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+_GATEWAY_TOKEN_FOR_CONNECT="$(_read_gateway_token)"
 {
   cat <<PROXYEOF
 # Proxy configuration (overrides narrow OpenShell defaults on connect)
@@ -1617,6 +1829,11 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
+  if [ -n "$_GATEWAY_TOKEN_FOR_CONNECT" ]; then
+    printf 'export OPENCLAW_GATEWAY_TOKEN=%q\n' "$_GATEWAY_TOKEN_FOR_CONNECT"
+  else
+    echo "unset OPENCLAW_GATEWAY_TOKEN"
+  fi
   # Global sandbox safety net for connect sessions — must be first.
   echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
   # HTTP library double-proxy fix: also expose NODE_OPTIONS in connect
@@ -1625,6 +1842,8 @@ PROXYEOF
   if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
   fi
+  # Structured access denial normalizer for connect sessions.
+  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_ACCESS_DENIAL_SCRIPT\""
   # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
   if [ -f "$_WS_FIX_SCRIPT" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""

@@ -6,6 +6,7 @@ import http from "node:http";
 import tls from "node:tls";
 
 import {
+  ACCESS_REQUEST_PRESETS,
   AccessRequestValidationError,
   createAccessRequest,
   readAccessRequestState,
@@ -239,6 +240,15 @@ function handleAccessRequestGet(
   jsonResponse(res, 200, toResponse(request));
 }
 
+function handlePresetsGet(res: http.ServerResponse): void {
+  jsonResponse(res, 200, {
+    presets: ACCESS_REQUEST_PRESETS.map((preset) => ({
+      name: preset.name,
+      description: preset.description,
+    })),
+  });
+}
+
 function handleError(res: http.ServerResponse, err: unknown): void {
   const statusCode =
     typeof err === "object" &&
@@ -272,6 +282,10 @@ export function createAccessControlServer(options: AccessControlServerOptions): 
 
         if (req.method === "POST" && url.pathname === "/v1/access-requests") {
           await handleAccessRequestPost(req, res, authenticated, options.deps);
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/v1/access-presets") {
+          handlePresetsGet(res);
           return;
         }
         if (req.method === "GET" && url.pathname.startsWith("/v1/access-requests/")) {

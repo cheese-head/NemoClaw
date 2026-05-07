@@ -30,6 +30,7 @@ import { loadAgent } from "./agent-defs.js";
 import { resolveOpenshell } from "./resolve-openshell.js";
 import { captureOpenshellCommand } from "./openshell.js";
 import { sanitizeConfigFile, isSensitiveFile } from "./credential-filter.js";
+import { shellQuote } from "./shell-quote.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
@@ -529,6 +530,7 @@ function _log(msg: string): void {
 
 const VERSION_SELECTOR_RE = /^v(\d+)$/i;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+const BACKUP_TAR_MAX_BUFFER = 2 * 1024 * 1024 * 1024;
 
 export function validateSnapshotName(name: string): string | null {
   if (!NAME_RE.test(name)) {
@@ -691,7 +693,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), tarCmd], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 120000,
-      maxBuffer: 256 * 1024 * 1024,
+      maxBuffer: BACKUP_TAR_MAX_BUFFER,
     });
     _log(
       `SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
@@ -783,17 +785,6 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
 
   const configFile = writeTempSshConfig(sshConfig);
   try {
-    // Upload via tar pipe
-    const tarResult = spawnSync("tar", ["-cf", "-", "-C", backupPath, ...localDirs], {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 60000,
-      maxBuffer: 256 * 1024 * 1024,
-    });
-
-    if (tarResult.status !== 0 || !tarResult.stdout) {
-      return { success: false, restoredDirs, failedDirs: [...localDirs] };
-    }
-
     // Remove existing state dirs before extracting so stale files from
     // later snapshots don't persist after restoring an earlier one.
     const rmCmd = localDirs.map((d) => `rm -rf "${writableDir}/${d}"`).join(" && ");
@@ -809,10 +800,23 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     }
 
     const extractCmd = `tar -xf - -C ${writableDir}`;
-    const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
-      input: tarResult.stdout,
-      stdio: ["pipe", "pipe", "pipe"],
+    const restoreCmd = [
+      "tar",
+      "-cf",
+      "-",
+      "-C",
+      shellQuote(backupPath),
+      ...localDirs.map((d) => shellQuote(d)),
+      "|",
+      "ssh",
+      ...sshArgs(configFile, sandboxName).map((arg) => shellQuote(arg)),
+      shellQuote(extractCmd),
+    ].join(" ");
+    _log(`Streaming restore via tar|ssh: ${restoreCmd.substring(0, 200)}...`);
+    const sshResult = spawnSync("bash", ["-o", "pipefail", "-c", restoreCmd], {
+      stdio: ["ignore", "pipe", "pipe"],
       timeout: 120000,
+      maxBuffer: 1024 * 1024,
     });
 
     if (sshResult.status === 0) {

@@ -26,6 +26,15 @@ export interface AccessRequestResponse {
   canonical_request?: AccessCanonicalRequest;
 }
 
+export interface AccessPresetInfo {
+  name: string;
+  description: string;
+}
+
+export interface AccessPresetsResponse {
+  presets: AccessPresetInfo[];
+}
+
 export interface CreateAccessRequestBody {
   version: "nemoclaw.access.v1";
   task_id?: string;
@@ -52,11 +61,16 @@ export interface AccessClientOptions {
   timeoutMs?: number;
 }
 
-function parseAccessResponse(raw: string): AccessRequestResponse {
+function parseJsonObject(raw: string): Record<string, unknown> {
   const parsed: unknown = raw.length > 0 ? JSON.parse(raw) : {};
   if (typeof parsed !== "object" || parsed === null) {
     throw new Error("NemoClaw control returned a non-object response");
   }
+  return parsed as Record<string, unknown>;
+}
+
+function parseAccessResponse(raw: string): AccessRequestResponse {
+  const parsed = parseJsonObject(raw);
 
   const response = parsed as Partial<AccessRequestResponse>;
   if (typeof response.request_id !== "string" || response.request_id.length === 0) {
@@ -69,12 +83,31 @@ function parseAccessResponse(raw: string): AccessRequestResponse {
   return response as AccessRequestResponse;
 }
 
-function requestJson(
+function parsePresetsResponse(raw: string): AccessPresetsResponse {
+  const parsed = parseJsonObject(raw);
+  if (!Array.isArray(parsed.presets)) {
+    throw new Error("NemoClaw control response is missing presets");
+  }
+  return {
+    presets: parsed.presets
+      .filter(
+        (preset): preset is AccessPresetInfo =>
+          typeof preset === "object" &&
+          preset !== null &&
+          typeof (preset as Partial<AccessPresetInfo>).name === "string" &&
+          typeof (preset as Partial<AccessPresetInfo>).description === "string",
+      )
+      .map((preset) => ({ name: preset.name, description: preset.description })),
+  };
+}
+
+function requestJson<T>(
   method: "GET" | "POST",
   requestPath: string,
   body: CreateAccessRequestBody | undefined,
   options: AccessClientOptions,
-): Promise<AccessRequestResponse> {
+  parseResponse: (raw: string) => T,
+): Promise<T> {
   const controlUrl = new URL(options.controlUrl);
   if (controlUrl.protocol !== "https:") {
     throw new Error("NemoClaw control URL must use HTTPS with mTLS.");
@@ -90,6 +123,9 @@ function requestJson(
   }
   if (options.attestationToken) {
     headers["X-NemoClaw-Plugin-Attestation"] = options.attestationToken;
+  }
+  if (options.servername && options.servername !== controlUrl.hostname) {
+    headers.Host = options.servername;
   }
 
   return new Promise((resolve, reject) => {
@@ -122,7 +158,7 @@ function requestJson(
           }
 
           try {
-            resolve(parseAccessResponse(raw));
+            resolve(parseResponse(raw));
           } catch (err) {
             reject(err);
           }
@@ -145,7 +181,7 @@ export function createAccessRequest(
   body: CreateAccessRequestBody,
   options: AccessClientOptions,
 ): Promise<AccessRequestResponse> {
-  return requestJson("POST", "/v1/access-requests", body, options);
+  return requestJson("POST", "/v1/access-requests", body, options, parseAccessResponse);
 }
 
 export function getAccessRequest(
@@ -157,5 +193,10 @@ export function getAccessRequest(
     `/v1/access-requests/${encodeURIComponent(requestId)}`,
     undefined,
     options,
+    parseAccessResponse,
   );
+}
+
+export function listAccessPresets(options: AccessClientOptions): Promise<AccessPresetsResponse> {
+  return requestJson("GET", "/v1/access-presets", undefined, options, parsePresetsResponse);
 }

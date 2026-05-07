@@ -17,6 +17,7 @@ const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
 );
+const HERMES_POLICY_PATH = new URL("../agents/hermes/policy-additions.yaml", import.meta.url);
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
   "provider_type",
   "endpoint",
@@ -330,6 +331,26 @@ describe("base sandbox policy", () => {
     ]);
   });
 
+  it("allows the NemoClaw plugin to submit access-control requests to the host control plane", () => {
+    const np = policy.network_policies ?? {};
+    const rule = np.nemoclaw_access_control;
+    expect(rule).toBeDefined();
+    const hosts = (rule?.endpoints ?? []).map((ep) => ep.host).sort();
+    expect(hosts).toEqual(["172.17.0.1", "host.openshell.internal"]);
+    for (const endpoint of rule?.endpoints ?? []) {
+      expect(endpoint).toEqual(
+        expect.objectContaining({
+          port: 19443,
+          tls: "skip",
+          access: "full",
+        }),
+      );
+      expect(endpoint.rules).toBeUndefined();
+    }
+    const binaries = (rule?.binaries ?? []).map((b) => b.path).sort();
+    expect(binaries).toEqual(["/**"]);
+  });
+
   it("regression #1458: baseline npm_registry must not include npm or node binaries", () => {
     const np = policy.network_policies ?? {};
     const npmRegistry = np.npm_registry;
@@ -341,6 +362,30 @@ describe("base sandbox policy", () => {
     // npm/node being in this list lets the agent bypass 'none' policy preset.
     // Exact allowlist — adding any binary here requires a deliberate review.
     expect(paths).toEqual(["/usr/local/bin/openclaw"]);
+  });
+});
+
+describe("Hermes sandbox policy", () => {
+  const policy = loadYaml<SandboxPolicy>(HERMES_POLICY_PATH);
+
+  it("allows the Hermes NemoClaw plugin to submit access-control requests", () => {
+    const np = policy.network_policies ?? {};
+    const rule = np.nemoclaw_access_control;
+    expect(rule).toBeDefined();
+    const hosts = (rule?.endpoints ?? []).map((ep) => ep.host).sort();
+    expect(hosts).toEqual(["172.17.0.1", "host.openshell.internal"]);
+    for (const endpoint of rule?.endpoints ?? []) {
+      expect(endpoint).toEqual(
+        expect.objectContaining({
+          port: 19443,
+          tls: "skip",
+          access: "full",
+        }),
+      );
+      expect(endpoint.rules).toBeUndefined();
+    }
+    const binaries = (rule?.binaries ?? []).map((b) => b.path).sort();
+    expect(binaries).toEqual(["/usr/bin/python3.11", "/usr/local/bin/hermes"]);
   });
 });
 

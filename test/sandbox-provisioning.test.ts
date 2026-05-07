@@ -73,6 +73,97 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
   });
 });
 
+describe("sandbox provisioning: stale base writable OpenClaw dirs", () => {
+  const src = fs.readFileSync(DOCKERFILE, "utf-8");
+
+  it("repairs stale-base writable dirs before installing the NemoClaw plugin", () => {
+    const repairIdx = src.indexOf("Repair writable OpenClaw state symlinks before switching");
+    const installIdx = src.indexOf(
+      "openclaw plugins install --force /sandbox/.openclaw/extensions/nemoclaw",
+    );
+    expect(repairIdx).toBeGreaterThanOrEqual(0);
+    expect(installIdx).toBeGreaterThan(repairIdx);
+  });
+
+  it("stages NemoClaw plugin inside extensions before installing it", () => {
+    const stageIdx = src.indexOf("cp -a /opt/nemoclaw /sandbox/.openclaw-data/extensions/nemoclaw");
+    const installIdx = src.indexOf(
+      "openclaw plugins install --force /sandbox/.openclaw/extensions/nemoclaw",
+    );
+    expect(stageIdx).toBeGreaterThanOrEqual(0);
+    expect(installIdx).toBeGreaterThan(stageIdx);
+  });
+
+  it("Dockerfile fallback covers extensions and devices before gateway startup", () => {
+    expect(src).toMatch(/for dir in agents extensions workspace skills hooks identity devices canvas cron memory logs credentials flows sandbox telegram plugin-runtime-deps/);
+  });
+
+  it("Dockerfile fallback creates .openclaw-data/workspace before linking workspace/media", () => {
+    const workspaceIdx = src.indexOf("/sandbox/.openclaw-data/workspace");
+    const mediaLinkIdx = src.indexOf(
+      "ln -sfn /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media",
+    );
+    expect(workspaceIdx).toBeGreaterThanOrEqual(0);
+    expect(mediaLinkIdx).toBeGreaterThan(workspaceIdx);
+  });
+
+  it("does not hide NemoClaw plugin install failures", () => {
+    expect(src).toContain("openclaw plugins install --force /sandbox/.openclaw/extensions/nemoclaw");
+    expect(src).not.toContain("openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true");
+  });
+
+  it("does not bypass OpenClaw plugin scanner for NemoClaw", () => {
+    expect(src).not.toContain(
+      'Plugin "nemoclaw" installation blocked: dangerous code patterns detected',
+    );
+    expect(src).not.toContain("treating built-in NemoClaw plugin scanner block");
+  });
+});
+
+describe("Hermes provisioning: writable prompt history", () => {
+  const baseSrc = fs.readFileSync(path.join(ROOT, "agents", "hermes", "Dockerfile.base"), "utf-8");
+  const imageSrc = fs.readFileSync(path.join(ROOT, "agents", "hermes", "Dockerfile"), "utf-8");
+
+  it("Hermes base image stores prompt history in writable .hermes-data", () => {
+    expect(baseSrc).toContain("touch /sandbox/.hermes-data/.hermes_history");
+    expect(baseSrc).toContain(
+      "ln -s /sandbox/.hermes-data/.hermes_history /sandbox/.hermes/.hermes_history",
+    );
+  });
+
+  it("Hermes final image repairs stale bases without a writable history symlink", () => {
+    expect(imageSrc).toContain("touch /sandbox/.hermes-data/.hermes_history");
+    expect(imageSrc).toContain(
+      "ln -s /sandbox/.hermes-data/.hermes_history /sandbox/.hermes/.hermes_history",
+    );
+  });
+});
+
+describe("Hermes startup: access-control environment", () => {
+  const startSrc = fs.readFileSync(path.join(ROOT, "agents", "hermes", "start.sh"), "utf-8");
+
+  it("persists NemoClaw control-plane env vars for interactive Hermes sessions", () => {
+    expect(startSrc).toContain("_PROXY_ENV_FILE=\"/tmp/nemoclaw-proxy-env.sh\"");
+    for (const key of [
+      "NEMOCLAW_CONTROL_URL",
+      "NEMOCLAW_CONTROL_SERVERNAME",
+      "NEMOCLAW_CONTROL_CA_PEM_B64",
+      "NEMOCLAW_CONTROL_CERT_PEM_B64",
+      "NEMOCLAW_CONTROL_KEY_PEM_B64",
+      "NEMOCLAW_PLUGIN_ATTESTATION",
+    ]) {
+      expect(startSrc).toContain(key);
+    }
+    expect(startSrc).toContain("printf 'export %s=%q\\n'");
+  });
+
+  it("sources the generated env file from Hermes interactive shell startup files", () => {
+    expect(startSrc).toContain(
+      "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh",
+    );
+  });
+});
+
 describe("sandbox provisioning: root-owned read-only config (#514)", () => {
   const src = fs.readFileSync(DOCKERFILE, "utf-8");
 

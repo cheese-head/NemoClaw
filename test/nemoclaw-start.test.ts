@@ -411,15 +411,9 @@ describe("runtime model override (#759)", () => {
     const guard = fn[1].split("return 0")[0];
     expect(guard).toContain("NEMOCLAW_MODEL_OVERRIDE");
     expect(guard).toContain("NEMOCLAW_INFERENCE_API_OVERRIDE");
-    expect(guard).not.toMatch(
-      /\[\s*-n\s*"\$\{NEMOCLAW_CONTEXT_WINDOW:-\}"/,
-    );
-    expect(guard).not.toMatch(
-      /\[\s*-n\s*"\$\{NEMOCLAW_MAX_TOKENS:-\}"/,
-    );
-    expect(guard).not.toMatch(
-      /\[\s*-n\s*"\$\{NEMOCLAW_REASONING:-\}"/,
-    );
+    expect(guard).not.toMatch(/\[\s*-n\s*"\$\{NEMOCLAW_CONTEXT_WINDOW:-\}"/);
+    expect(guard).not.toMatch(/\[\s*-n\s*"\$\{NEMOCLAW_MAX_TOKENS:-\}"/);
+    expect(guard).not.toMatch(/\[\s*-n\s*"\$\{NEMOCLAW_REASONING:-\}"/);
   });
 });
 
@@ -492,9 +486,7 @@ describe("Slack channel guard — unhandled-rejection safety net (#2340)", () =>
   });
 
   it("calls install_slack_channel_guard after configure_messaging_channels in both paths", () => {
-    const nonRootBlock = src.match(
-      /if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/,
-    );
+    const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
     expect(nonRootBlock).toBeTruthy();
     expect(nonRootBlock[1]).toMatch(
       /configure_messaging_channels[\s\S]*?install_slack_channel_guard/,
@@ -509,12 +501,28 @@ describe("Slack channel guard — unhandled-rejection safety net (#2340)", () =>
   it("is a no-op when no Slack channel is configured", () => {
     const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
-    expect(fn[1]).toContain('grep -q \'"slack"\'');
+    expect(fn[1]).toContain("grep -q '\"slack\"'");
     expect(fn[1]).toContain("return 0");
   });
 
   it("installs a Node.js preload script via NODE_OPTIONS", () => {
-    expect(src).toContain('export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT"');
+    expect(src).toContain(
+      'export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT"',
+    );
+  });
+
+  it("installs structured access denial normalizer via NODE_OPTIONS", () => {
+    expect(src).toContain('_ACCESS_DENIAL_SCRIPT="/tmp/nemoclaw-access-denial-normalizer.js"');
+    expect(src).toContain("nemoclaw.denial.v1");
+    expect(src).toContain(
+      'export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_ACCESS_DENIAL_SCRIPT"',
+    );
+  });
+
+  it("exports the gateway token through proxy-env for connect shells", () => {
+    expect(src).toContain("_GATEWAY_TOKEN_FOR_CONNECT=\"$(_read_gateway_token)\"");
+    expect(src).toContain("export OPENCLAW_GATEWAY_TOKEN=%q");
+    expect(src).toContain("unset OPENCLAW_GATEWAY_TOKEN");
   });
 
   it("catches unhandled promise rejections from Slack", () => {

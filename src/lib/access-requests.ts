@@ -9,14 +9,31 @@ import path from "node:path";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 
 export const ACCESS_REQUESTS_STATE_VERSION = 1;
+export const ACCESS_REQUEST_PRESETS = [
+  { name: "brave", description: "Brave Search API access" },
+  { name: "brew", description: "Homebrew (Linuxbrew) package manager access" },
+  { name: "discord", description: "Discord API, gateway, and CDN access" },
+  { name: "github", description: "GitHub.com and GitHub API access (git, gh)" },
+  { name: "huggingface", description: "Hugging Face Hub, LFS, and Inference API access" },
+  { name: "jira", description: "Jira and Atlassian Cloud access" },
+  { name: "local-inference", description: "Local inference access via host gateway" },
+  { name: "npm", description: "npm and Yarn registry access" },
+  { name: "outlook", description: "Microsoft Outlook and Graph API access" },
+  { name: "pypi", description: "Python Package Index (PyPI) access" },
+  { name: "slack", description: "Slack API, Socket Mode, and webhooks access" },
+  { name: "telegram", description: "Telegram Bot API access" },
+] as const;
+
+export const ACCESS_REQUEST_PRESET_NAMES = ACCESS_REQUEST_PRESETS.map((preset) => preset.name);
+
 export const DEFAULT_ACCESS_REQUEST_CEILING = {
-  allowedPresets: ["github"] as const,
+  allowedPresets: ACCESS_REQUEST_PRESET_NAMES,
   maxRequestsPerHourPerSandbox: 20,
   maxOpenGrantsPerSandbox: 5,
   dedupeWindowMs: 5 * 60 * 1000,
 };
 
-export type AccessRequestPreset = "github";
+export type AccessRequestPreset = (typeof ACCESS_REQUEST_PRESET_NAMES)[number];
 export type AccessRequestAccess = "read" | "read_write";
 export type AccessRequestDuration = "session";
 export type AccessRequestResourceType = "network";
@@ -186,8 +203,21 @@ function normalizePreset(proposal: AccessRequestProposal): AccessRequestPreset {
     .trim()
     .toLowerCase();
 
+  const candidateHost = (() => {
+    if (!candidate.includes("://")) {
+      return candidate;
+    }
+    try {
+      return new URL(candidate).hostname.toLowerCase();
+    } catch {
+      return candidate;
+    }
+  })();
+  const presetNames = new Set<string>(ACCESS_REQUEST_PRESET_NAMES);
+  const githubCandidates = new Set(["github", "github.com", "api.github.com"]);
+
   if (
-    candidate === "github" &&
+    githubCandidates.has(candidateHost) &&
     (host === "" || host === "github.com" || host === "api.github.com")
   ) {
     return "github";
@@ -195,10 +225,13 @@ function normalizePreset(proposal: AccessRequestProposal): AccessRequestPreset {
   if (candidate === "" && (host === "github.com" || host === "api.github.com")) {
     return "github";
   }
+  if (presetNames.has(candidateHost) && host === "") {
+    return candidateHost as AccessRequestPreset;
+  }
 
   throw new AccessRequestValidationError(
     "UNKNOWN_PRESET",
-    "Only known access presets are accepted in v1; custom hosts are not supported.",
+    "Only known access presets are accepted; custom hosts are not supported.",
   );
 }
 
@@ -389,7 +422,7 @@ function ceilingRejectionReason(
   ceiling: Required<AccessRequestCeiling>,
 ): string | null {
   if (!ceiling.allowedPresets.includes(canonical.preset)) {
-    return `Preset ${canonical.preset} is not allowed by the v1 ceiling.`;
+    return `Preset ${canonical.preset} is not allowed by the configured access policy.`;
   }
 
   const hourAgo = nowMs - 60 * 60 * 1000;

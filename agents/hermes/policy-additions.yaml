@@ -98,6 +98,24 @@ network_policies:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3.11 }
 
+  # ── NemoClaw access-control callback ───────────────────────────
+  # Hermes runs the NemoClaw plugin inside its gateway process. Access
+  # grants are approved and applied by the host-side NemoClaw control plane.
+  nemoclaw_access_control:
+    name: nemoclaw_access_control
+    endpoints:
+      - host: host.openshell.internal
+        port: 19443
+        tls: skip
+        access: full
+      - host: 172.17.0.1
+        port: 19443
+        tls: skip
+        access: full
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3.11 }
+
   github:
     name: github
     endpoints:

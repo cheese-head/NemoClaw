@@ -155,6 +155,15 @@ describe("onboard/config", () => {
       store.set(configPath, JSON.stringify({ endpointType: "bogus" }));
       expect(loadOnboardConfig()).toBeNull();
     });
+
+    it("returns null when the config file is empty or invalid JSON", () => {
+      const configPath = `${homedir()}/.nemoclaw/config.json`;
+      store.set(configPath, "");
+      expect(loadOnboardConfig()).toBeNull();
+
+      store.set(configPath, "{");
+      expect(loadOnboardConfig()).toBeNull();
+    });
   });
 
   describe("saveOnboardConfig", () => {

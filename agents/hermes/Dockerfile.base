@@ -74,6 +74,7 @@ RUN mkdir -p /sandbox/.hermes-data/memories \
         /sandbox/.hermes-data/profiles \
         /sandbox/.hermes-data/cache \
         /sandbox/.hermes-data/pairing \
+    && touch /sandbox/.hermes-data/.hermes_history \
     && mkdir -p /sandbox/.hermes \
     && ln -s /sandbox/.hermes-data/memories /sandbox/.hermes/memories \
     && ln -s /sandbox/.hermes-data/sessions /sandbox/.hermes/sessions \
@@ -87,6 +88,7 @@ RUN mkdir -p /sandbox/.hermes-data/memories \
     && ln -s /sandbox/.hermes-data/profiles /sandbox/.hermes/profiles \
     && ln -s /sandbox/.hermes-data/cache /sandbox/.hermes/cache \
     && ln -s /sandbox/.hermes-data/pairing /sandbox/.hermes/pairing \
+    && ln -s /sandbox/.hermes-data/.hermes_history /sandbox/.hermes/.hermes_history \
     && chown -R sandbox:sandbox /sandbox/.hermes /sandbox/.hermes-data
 
 # Install Hermes Agent from GitHub release.

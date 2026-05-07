@@ -84,8 +84,35 @@ describe("access requests", () => {
     expect(canonical.request_hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it("accepts built-in presets", () => {
+    for (const resource of [
+      "brave",
+      "brew",
+      "discord",
+      "github",
+      "huggingface",
+      "jira",
+      "local-inference",
+      "npm",
+      "outlook",
+      "pypi",
+      "slack",
+      "telegram",
+    ]) {
+      const canonical = canonicalizeAccessRequest(
+        {
+          resource,
+          reason: `Use ${resource}`,
+          user_intent: `Need ${resource} access`,
+        },
+        makeDeps(),
+      );
+      expect(canonical.preset).toBe(resource);
+    }
+  });
+
   it("rejects unknown presets, custom hosts, and persistent duration", () => {
-    expect(() => canonicalizeAccessRequest({ resource: "npm" }, makeDeps())).toThrow(
+    expect(() => canonicalizeAccessRequest({ resource: "unknown" }, makeDeps())).toThrow(
       AccessRequestValidationError,
     );
     expect(() => canonicalizeAccessRequest({ host: "example.com" }, makeDeps())).toThrow(
@@ -94,6 +121,20 @@ describe("access requests", () => {
     expect(() =>
       canonicalizeAccessRequest({ resource: "github", duration: "persistent" }, makeDeps()),
     ).toThrow(/Persistent access grants are disabled/);
+  });
+
+  it("normalizes GitHub host aliases to the github preset", () => {
+    for (const resource of ["github.com", "api.github.com", "https://github.com"]) {
+      const canonical = canonicalizeAccessRequest(
+        {
+          resource,
+          reason: "Fetch issue metadata",
+          user_intent: "Use GitHub",
+        },
+        makeDeps(),
+      );
+      expect(canonical.preset).toBe("github");
+    }
   });
 
   it("sanitizes display-untrusted text and applies field caps", () => {

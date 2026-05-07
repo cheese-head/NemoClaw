@@ -234,6 +234,22 @@ afterEach(() => {
 });
 
 describe("access control server", () => {
+  it("lists accepted access presets", async () => {
+    const deps = makeDeps();
+    await withServer(deps, async (port) => {
+      const response = await request(port, "GET", "/v1/access-presets");
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.presets).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "github" }),
+          expect.objectContaining({ name: "pypi" }),
+          expect.objectContaining({ name: "slack" }),
+        ]),
+      );
+    });
+  });
+
   it("creates and reads access requests using mTLS sandbox identity", async () => {
     const deps = makeDeps();
     await withServer(deps, async (port) => {

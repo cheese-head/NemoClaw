@@ -11,7 +11,6 @@
  * time.
  */
 
-import { execFileSync } from "node:child_process";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
   describeOnboardEndpoint,
@@ -21,12 +20,18 @@ import {
 import {
   createAccessRequest,
   getAccessRequest,
+  listAccessPresets,
   type AccessCanonicalRequest,
   type AccessClientOptions,
   type AccessRequestResponse,
   type AccessStatus,
   type CreateAccessRequestBody,
 } from "./access-client.js";
+import {
+  findRecentAccessDenial,
+  readRecentAccessDenials,
+  type NemoClawAccessDenial,
+} from "./access-denials.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
 
 type PluginScalar = string | number | boolean | null | undefined;
@@ -63,29 +68,21 @@ function readBeforeToolCallEvent(
   };
 }
 
-// Resolve live inference config from OpenShell as a fallback when the
-// onboard config file is not available (e.g. when running inside the
-// sandbox). Returns empty strings if the probe fails.
-function probeOpenShellInference(): { endpoint: string; provider: string; model: string } {
-  try {
-    const raw = execFileSync("openshell", ["inference", "get", "--json"], {
-      encoding: "utf-8",
-      timeout: 3000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const parsed: unknown = JSON.parse(raw);
-    const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
-    const endpoint = readStringProperty(parsedObject, "endpoint");
-    const provider = readStringProperty(parsedObject, "provider");
-    const model = readStringProperty(parsedObject, "model");
-    return {
-      endpoint: endpoint ?? "",
-      provider: provider ?? "",
-      model: model ?? "",
-    };
-  } catch {
-    return { endpoint: "", provider: "", model: "" };
-  }
+// Resolve live inference model from the OpenClaw config passed to the plugin
+// host. Avoid child_process here: OpenClaw's plugin scanner blocks third-party
+// plugins that import shell execution APIs, and NemoClaw's access-request
+// tools must be available in the sandbox at startup.
+function probeOpenClawConfig(config: OpenClawConfig): { endpoint: string; provider: string; model: string } {
+  const agents = config["agents"];
+  const defaults = isToolParams(agents) ? agents["defaults"] : undefined;
+  const modelConfig = isToolParams(defaults) ? defaults["model"] : undefined;
+  const primary = readStringProperty(modelConfig, "primary");
+  const model = primary?.startsWith("inference/") ? primary.slice("inference/".length) : primary;
+  return {
+    endpoint: "",
+    provider: "",
+    model: model ?? "",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -372,6 +369,28 @@ function readDuration(params: ToolParams): "session" | "persistent" {
   return params["duration"] === "persistent" ? "persistent" : "session";
 }
 
+function normalizeRequestedResource(resource: string): string {
+  const normalized = resource.trim().toLowerCase();
+  const normalizedHost = (() => {
+    if (!normalized.includes("://")) {
+      return normalized;
+    }
+    try {
+      return new URL(normalized).hostname.toLowerCase();
+    } catch {
+      return normalized;
+    }
+  })();
+  if (
+    normalizedHost === "github" ||
+    normalizedHost === "github.com" ||
+    normalizedHost === "api.github.com"
+  ) {
+    return "github";
+  }
+  return normalized;
+}
+
 function clampWaitTimeout(value: number | undefined, fallback: number): number {
   const timeout = value ?? fallback;
   if (timeout <= 0) {
@@ -450,7 +469,7 @@ function accessClientOptions(): AccessClientOptions {
 
 function createAccessRequestBody(params: ToolParams): CreateAccessRequestBody {
   const userIntent = readStringProperty(params, "user_intent") ?? "";
-  const resource = readStringProperty(params, "resource") ?? "";
+  const resource = normalizeRequestedResource(readStringProperty(params, "resource") ?? "");
   const reason = readStringProperty(params, "reason") ?? "";
   const taskId = readStringProperty(params, "task_id");
 
@@ -464,6 +483,27 @@ function createAccessRequestBody(params: ToolParams): CreateAccessRequestBody {
       access: readAccessMode(params),
       duration: readDuration(params),
       reason,
+    },
+  };
+}
+
+function createAccessRequestBodyFromDenial(denial: NemoClawAccessDenial): CreateAccessRequestBody {
+  const suggestion = denial.suggested_access;
+  if (!suggestion) {
+    throw new Error("The denial does not include a suggested access preset.");
+  }
+  return {
+    version: "nemoclaw.access.v1",
+    task_id: denial.id,
+    user_intent: denial.user_message,
+    llm_proposal: {
+      resource_type: "network",
+      preset: suggestion.resource,
+      access: suggestion.access,
+      duration: suggestion.duration,
+      reason:
+        denial.openshell?.detail ??
+        `Retry blocked request to ${denial.observed.host ?? denial.observed.url ?? "external resource"}.`,
     },
   };
 }
@@ -490,7 +530,7 @@ export default function register(api: OpenClawPluginApi): void {
   // state so the TUI footer reflects the current model after a runtime
   // `openshell inference set` (#2608).
   const onboardCfg = loadOnboardConfig();
-  const probed = probeOpenShellInference();
+  const probed = probeOpenClawConfig(api.config);
 
   let bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "";
   let bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "";
@@ -512,7 +552,7 @@ export default function register(api: OpenClawPluginApi): void {
   api.registerTool({
     name: "request_resource_access",
     description:
-      "Request least-privilege external resource access through NemoClaw. Prefer read access unless the task clearly requires mutation. This proposes access only; NemoClaw and OpenShell decide and enforce.",
+      "Request least-privilege external resource access through NemoClaw. The resource field must be a NemoClaw preset id, not a hostname. Call list_resource_access_presets first if you are unsure which preset to request. Prefer read access unless the task clearly requires mutation. This proposes access only; NemoClaw and OpenShell decide and enforce.",
     parameters: accessToolParameters(["user_intent", "resource", "reason"], {
       user_intent: {
         type: "string",
@@ -520,7 +560,8 @@ export default function register(api: OpenClawPluginApi): void {
       },
       resource: {
         type: "string",
-        description: "The requested resource, such as github, pypi, npm, slack, or a host name.",
+        description:
+          "NemoClaw preset id to request. Use list_resource_access_presets to discover valid preset ids. Use github for GitHub hosts such as github.com and api.github.com.",
       },
       access: {
         type: "string",
@@ -562,6 +603,22 @@ export default function register(api: OpenClawPluginApi): void {
   });
 
   api.registerTool({
+    name: "list_resource_access_presets",
+    description:
+      "List NemoClaw resource-access preset ids currently accepted for access requests. Call this before request_resource_access when the needed preset is unclear.",
+    parameters: accessToolParameters([], {}),
+    async execute() {
+      const response = await listAccessPresets(accessClientOptions());
+      return {
+        presets: response.presets.map((preset) => ({
+          name: preset.name,
+          description: preset.description,
+        })),
+      };
+    },
+  });
+
+  api.registerTool({
     name: "check_resource_access",
     description:
       "Check or continue waiting for a NemoClaw access request. This reports status only and cannot approve or modify access.",
@@ -591,6 +648,75 @@ export default function register(api: OpenClawPluginApi): void {
       const clientOptions = accessClientOptions();
       const response = await getAccessRequest(requestId, clientOptions);
       const timeoutMs = clampWaitTimeout(readNumberProperty(params, "wait_timeout_ms"), 0);
+      return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
+    },
+  });
+
+  api.registerTool({
+    name: "get_recent_access_denials",
+    description:
+      "List recent structured NemoClaw network policy denials observed inside the sandbox. Use this after a network/tool failure to decide whether to request operator-approved resource access.",
+    parameters: accessToolParameters([], {
+      limit: {
+        type: "number",
+        minimum: 1,
+        maximum: 20,
+        default: 5,
+        description: "Maximum number of recent denials to return.",
+      },
+    }),
+    execute(_id, params) {
+      const limit = readNumberProperty(params, "limit") ?? 5;
+      return {
+        denials: readRecentAccessDenials({ limit }),
+      };
+    },
+  });
+
+  api.registerTool({
+    name: "request_access_for_denial",
+    description:
+      "Request operator approval using the suggested access from a recent NemoClaw structured network denial. This cannot approve access; it only creates or polls a host-side access request.",
+    parameters: accessToolParameters(["denial_id"], {
+      denial_id: {
+        type: "string",
+        description: "The denial id returned by get_recent_access_denials.",
+      },
+      wait_timeout_ms: {
+        type: "number",
+        minimum: 0,
+        maximum: MAX_ACCESS_WAIT_MS,
+        default: DEFAULT_ACCESS_WAIT_MS,
+        description: "How long to wait for a terminal status before returning pending.",
+      },
+    }),
+    async execute(_id, params) {
+      const denialId = readStringProperty(params, "denial_id");
+      if (!denialId) {
+        return {
+          request_id: "",
+          status: "failed",
+          message: "Missing denial_id.",
+        };
+      }
+      const denial = findRecentAccessDenial(denialId);
+      if (!denial) {
+        return {
+          request_id: "",
+          status: "failed",
+          message: `Access denial not found: ${denialId}`,
+        };
+      }
+
+      const clientOptions = accessClientOptions();
+      const response = await createAccessRequest(
+        createAccessRequestBodyFromDenial(denial),
+        clientOptions,
+      );
+      const timeoutMs = clampWaitTimeout(
+        readNumberProperty(params, "wait_timeout_ms"),
+        DEFAULT_ACCESS_WAIT_MS,
+      );
       return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
     },
   });
