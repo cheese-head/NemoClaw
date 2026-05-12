@@ -3,11 +3,38 @@
 
 import fs from "node:fs";
 
-import type { AccessTuiRecord, AuditResult } from "./model";
+import type { AccessTuiRecord, AuditResult, CurrentAccessSnapshot } from "./model";
 
 const accessRequests = require("../access-requests");
 const policies = require("../policies");
 const registry = require("../registry");
+
+function sortedUnique(values: string[]): string[] {
+  return [
+    ...new Set(values.filter((value) => typeof value === "string" && value.length > 0)),
+  ].sort();
+}
+
+export function getCurrentAccessSnapshot(
+  sandboxName: string,
+  requestedPreset: string,
+): CurrentAccessSnapshot {
+  const registryPresets = sortedUnique(policies.getAppliedPresets(sandboxName) ?? []);
+  const gatewayPresetsRaw = policies.getGatewayPresets(sandboxName);
+  const gatewayPresets = Array.isArray(gatewayPresetsRaw) ? sortedUnique(gatewayPresetsRaw) : null;
+  const effectivePresets = gatewayPresets ?? registryPresets;
+  const registryKey = registryPresets.join("\0");
+  const gatewayKey = gatewayPresets?.join("\0") ?? null;
+
+  return {
+    sandbox_id: sandboxName,
+    registry_presets: registryPresets,
+    gateway_presets: gatewayPresets,
+    effective_presets: effectivePresets,
+    drift: gatewayKey !== null && gatewayKey !== registryKey,
+    requested_preset_already_active: effectivePresets.includes(requestedPreset),
+  };
+}
 
 export function readAllAccessRequests(): AccessTuiRecord[] {
   const items: AccessTuiRecord[] = [];
@@ -30,6 +57,7 @@ export function readAllAccessRequests(): AccessTuiRecord[] {
       items.push({
         ...(request as AccessTuiRecord),
         sandbox_id: request.sandbox_id || sandboxName,
+        current_access: getCurrentAccessSnapshot(request.sandbox_id || sandboxName, request.preset),
       });
     }
   }

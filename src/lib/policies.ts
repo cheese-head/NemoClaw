@@ -699,10 +699,47 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
   }));
 }
 
+function presetNetworkPolicyKeys(presetContent: string | null | undefined): string[] {
+  const entries = extractPresetEntries(presetContent);
+  if (!entries) return [];
+
+  try {
+    const wrapped = "network_policies:\n" + entries;
+    const parsed = YAML.parse(wrapped);
+    const networkPolicies = parsed?.network_policies;
+    if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+      return [];
+    }
+    return Object.keys(networkPolicies);
+  } catch {
+    return [];
+  }
+}
+
+function matchPresetNamesInPolicy(
+  gatewayPolicyNames: Set<string>,
+  presets: Array<{ name: string; content: string | null | undefined }>,
+): string[] {
+  const matched: string[] = [];
+  const seen = new Set<string>();
+
+  for (const preset of presets) {
+    if (seen.has(preset.name)) continue;
+    seen.add(preset.name);
+
+    const presetKeys = presetNetworkPolicyKeys(preset.content);
+    if (presetKeys.length > 0 && presetKeys.every((key) => gatewayPolicyNames.has(key))) {
+      matched.push(preset.name);
+    }
+  }
+
+  return matched;
+}
+
 /**
  * Query the gateway for the currently loaded policy and determine which
  * presets are actually enforced by matching network_policies entries
- * against known preset definitions.
+ * against built-in and sandbox-recorded custom preset definitions.
  *
  * Returns an array of preset names whose network_policies keys are all
  * found in the gateway's loaded policy, or `null` when the gateway
@@ -738,34 +775,20 @@ function getGatewayPresets(sandboxName: string): string[] | null {
   }
 
   const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
-  const matched = [];
+  const builtinPresets = listPresets().map((preset: PresetInfo) => ({
+    name: preset.name,
+    content: loadPreset(preset.name),
+  }));
+  const customPresets = registry
+    .getCustomPolicies(sandboxName)
+    .map((preset: { name: string; content?: string }) => ({
+      name: preset.name,
+      content: preset.content,
+    }));
 
-  for (const preset of listPresets()) {
-    const content = loadPreset(preset.name);
-    if (!content) continue;
-    const entries = extractPresetEntries(content);
-    if (!entries) continue;
-
-    let presetPolicies;
-    try {
-      const wrapped = "network_policies:\n" + entries;
-      const presetParsed = YAML.parse(wrapped);
-      presetPolicies = presetParsed?.network_policies;
-    } catch {
-      continue;
-    }
-
-    if (!presetPolicies || typeof presetPolicies !== "object") continue;
-
-    // A preset is considered "active on gateway" if ALL of its
-    // network_policies keys exist in the gateway's loaded policy.
-    const presetKeys = Object.keys(presetPolicies);
-    if (presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k))) {
-      matched.push(preset.name);
-    }
-  }
-
-  return matched;
+  // A preset is considered active on the gateway if ALL of its
+  // network_policies keys exist in the gateway's loaded policy.
+  return matchPresetNamesInPolicy(gatewayPolicyNames, [...builtinPresets, ...customPresets]);
 }
 
 /**
@@ -941,6 +964,8 @@ export {
   loadPreset,
   getPresetEndpoints,
   extractPresetEntries,
+  presetNetworkPolicyKeys,
+  matchPresetNamesInPolicy,
   parseCurrentPolicy,
   buildPolicySetCommand,
   buildPolicyGetCommand,

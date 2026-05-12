@@ -84,4 +84,63 @@ describe("access TUI rendering", () => {
     );
     expect(text).toContain("Policy Change Preview");
   });
+
+  it("shows current sandbox access and net-new access in detail view", () => {
+    const lines = renderAccessTuiLines(
+      {
+        ...DEFAULT_STATE,
+        screen: { name: "detail" },
+        now: new Date("2026-05-06T14:01:00.000Z"),
+        items: [
+          record({
+            preset: "slack",
+            current_access: {
+              sandbox_id: "demo",
+              registry_presets: ["github"],
+              gateway_presets: ["github", "slack"],
+              effective_presets: ["github", "slack"],
+              drift: true,
+              requested_preset_already_active: true,
+            },
+          }),
+        ],
+      },
+      120,
+    );
+
+    const text = lines.join("\n");
+    expect(text).toContain("Current Access");
+    expect(text).toContain("Active presets       github, slack");
+    expect(text).toContain("Gateway verified     yes");
+    expect(text).toContain("State drift           registry differs from live gateway");
+    expect(text).toContain("Net new access       none, already active");
+  });
+
+  it("renders an advisor result without implying approval was applied", () => {
+    const lines = renderAccessTuiLines(
+      {
+        ...DEFAULT_STATE,
+        screen: {
+          name: "advisor",
+          requestId: "req-1",
+          result: {
+            recommendation: "needs_review",
+            confidence: "medium",
+            summary: "Slack is new access; verify the workspace.",
+            risks: ["External messaging access"],
+            missing_context: ["Workspace id"],
+          },
+        },
+        now: new Date("2026-05-06T14:01:00.000Z"),
+        items: [record({ preset: "slack" })],
+      },
+      120,
+    );
+
+    const text = lines.join("\n");
+    expect(text).toContain("LLM Advisor");
+    expect(text).toContain("Advisory only. Operator approval is still required.");
+    expect(text).toContain("Recommendation needs_review");
+    expect(text).toContain("External messaging access");
+  });
 });

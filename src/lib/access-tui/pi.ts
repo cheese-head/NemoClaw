@@ -8,6 +8,7 @@ import {
   revokeAccessRequest,
   verifyAccessAudit,
 } from "./actions";
+import { adviseAccessRequest } from "./advisor";
 import {
   clampCursor,
   DEFAULT_STATE,
@@ -17,6 +18,7 @@ import {
   type AccessTuiScreen,
   type AccessTuiState,
 } from "./model";
+import type { AccessAdvisorResult } from "./advisor";
 import { ansiStyle, renderAccessTuiLines } from "./render";
 
 type PiModule = {
@@ -45,6 +47,7 @@ type PiComponent = {
 
 type Deps = {
   readItems?: () => AccessTuiState["items"];
+  advise?: (record: NonNullable<ReturnType<typeof selectedItem>>) => Promise<AccessAdvisorResult>;
   now?: () => Date;
   setInterval?: typeof setInterval;
   clearInterval?: typeof clearInterval;
@@ -65,6 +68,9 @@ class AccessTuiApp implements PiComponent {
   private readonly requestRender: () => void;
   private readonly stop: () => void;
   private readonly readItems: () => AccessTuiState["items"];
+  private readonly advise: (
+    record: NonNullable<ReturnType<typeof selectedItem>>,
+  ) => Promise<AccessAdvisorResult>;
   private readonly now: () => Date;
 
   constructor(pi: PiModule, requestRender: () => void, stop: () => void, deps: Deps = {}) {
@@ -72,6 +78,7 @@ class AccessTuiApp implements PiComponent {
     this.requestRender = requestRender;
     this.stop = stop;
     this.readItems = deps.readItems ?? readAllAccessRequests;
+    this.advise = deps.advise ?? adviseAccessRequest;
     this.now = deps.now ?? (() => new Date());
     this.state = {
       ...DEFAULT_STATE,
@@ -136,6 +143,8 @@ class AccessTuiApp implements PiComponent {
       });
     } else if (data === "?") {
       this.setScreen({ name: "help" });
+    } else if (data === "l" || data === "L") {
+      void this.openAdvisor();
     } else if (data === "a" || data === "A") {
       this.openConfirm("approve");
     } else if (data === "d" || data === "D") {
@@ -229,6 +238,19 @@ class AccessTuiApp implements PiComponent {
     const item = selectedItem(this.state);
     if (!item) return;
     this.setScreen({ name: "audit", result: verifyAccessAudit(item.sandbox_id) });
+  }
+
+  private async openAdvisor(): Promise<void> {
+    const item = selectedItem(this.state);
+    if (!item) return;
+    this.setScreen({ name: "advisor", requestId: item.id, loading: true });
+    try {
+      const result = await this.advise(item);
+      this.setScreen({ name: "advisor", requestId: item.id, result });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.setScreen({ name: "advisor", requestId: item.id, error: message });
+    }
   }
 
   private setScreen(screen: AccessTuiScreen): void {

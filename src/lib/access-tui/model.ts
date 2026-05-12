@@ -12,6 +12,24 @@ export type AccessTuiStatus =
   | "revoked"
   | string;
 
+export type CurrentAccessSnapshot = {
+  sandbox_id: string;
+  registry_presets: string[];
+  gateway_presets: string[] | null;
+  effective_presets: string[];
+  drift: boolean;
+  requested_preset_already_active: boolean;
+};
+
+export type AccessAdvisorResult = {
+  recommendation: "approve" | "deny" | "needs_review";
+  confidence: "low" | "medium" | "high";
+  summary: string;
+  risks: string[];
+  missing_context: string[];
+  suggested_deny_reason?: string;
+};
+
 export type AccessTuiRecord = {
   id: string;
   sandbox_id: string;
@@ -24,6 +42,7 @@ export type AccessTuiRecord = {
   reason?: string;
   ceiling_reason?: string;
   status_reason?: string;
+  current_access?: CurrentAccessSnapshot;
   created_at: string;
   updated_at: string;
   expires_at?: string;
@@ -37,6 +56,13 @@ export type AuditResult =
 export type AccessTuiScreen =
   | { name: "inbox" }
   | { name: "detail" }
+  | {
+      name: "advisor";
+      requestId: string;
+      loading?: boolean;
+      result?: AccessAdvisorResult;
+      error?: string;
+    }
   | { name: "confirm"; action: "approve" | "deny" | "revoke"; reason?: string }
   | { name: "audit"; result: AuditResult }
   | { name: "help" }

@@ -81,6 +81,36 @@ function statusStyle(status: string, style: Style): (text: string) => string {
   return style.dim;
 }
 
+function formatPresetList(presets: string[] | null | undefined): string {
+  if (presets === null) return "unavailable";
+  if (!presets || presets.length === 0) return "none";
+  return presets.join(", ");
+}
+
+function currentAccessLines(item: AccessTuiRecord, style: Style): string[] {
+  const snapshot = item.current_access;
+  if (!snapshot) {
+    return [
+      section("Current Access", style),
+      "Active presets       unavailable",
+      "Gateway verified     no",
+      `Requested preset     ${item.preset}`,
+      "Net new access       unknown",
+    ];
+  }
+
+  const gatewayVerified = snapshot.gateway_presets === null ? "no" : "yes";
+  const netNew = snapshot.requested_preset_already_active ? "none, already active" : item.preset;
+  return [
+    section("Current Access", style),
+    `Active presets       ${formatPresetList(snapshot.effective_presets)}`,
+    `Gateway verified     ${gatewayVerified}`,
+    snapshot.drift ? style.warning("State drift           registry differs from live gateway") : "",
+    `Requested preset     ${item.preset}`,
+    `Net new access       ${netNew}`,
+  ].filter((line) => line !== "");
+}
+
 function renderInboxRow(
   item: AccessTuiRecord,
   selected: boolean,
@@ -112,6 +142,8 @@ export function renderAccessTuiLines(
   switch (state.screen.name) {
     case "detail":
       return renderDetailLines(state, safeWidth, style);
+    case "advisor":
+      return renderAdvisorLines(state, safeWidth, style);
     case "confirm":
       return renderConfirmLines(state, safeWidth, style);
     case "audit":
@@ -154,7 +186,7 @@ function renderInboxLines(state: AccessTuiState, width: number, style: Style): s
   lines.push("");
   lines.push(
     style.dim(
-      "↑/↓ j/k move  Enter details  a approve  d deny  r revoke  v audit  f filter  Ctrl-r refresh  ? help  q quit",
+      "↑/↓ j/k move  Enter details  l advisor  a approve  d deny  r revoke  v audit  f filter  Ctrl-r refresh  ? help  q quit",
     ),
   );
   return lines.map((line) => truncate(line, width));
@@ -181,6 +213,8 @@ function renderDetailLines(state: AccessTuiState, width: number, style: Style): 
     `Created      ${item.created_at}`,
     `Expires      ${formatRemainingTime(item.expires_at, state.now)}`,
     "",
+    ...currentAccessLines(item, style),
+    "",
     section("Policy Change Preview", style),
     `Will apply preset: ${item.preset}`,
     item.preset === "github"
@@ -192,8 +226,57 @@ function renderDetailLines(state: AccessTuiState, width: number, style: Style): 
     `Intent       ${item.user_intent || "(none)"}`,
     `Reason       ${item.reason || "(none)"}`,
     "",
-    style.dim("a approve  d deny  r revoke  v audit  Esc back"),
+    style.dim("l advisor  a approve  d deny  r revoke  v audit  Esc back"),
   ];
+  return lines.map((line) => truncate(line, width));
+}
+
+function renderAdvisorLines(state: AccessTuiState, width: number, style: Style): string[] {
+  if (state.screen.name !== "advisor") return [];
+  const item = selectedItem(state);
+  const lines = [section("LLM Advisor", style), ""];
+  lines.push("Advisory only. Operator approval is still required.");
+  if (item) {
+    lines.push(`Request      ${item.id}`);
+    lines.push(`Preset       ${item.preset}`);
+    lines.push(
+      `Net new      ${
+        item.current_access?.requested_preset_already_active ? "none, already active" : item.preset
+      }`,
+    );
+  } else {
+    lines.push(`Request      ${state.screen.requestId}`);
+  }
+  lines.push("");
+
+  if (state.screen.loading) {
+    lines.push("Reviewing verified access context...");
+  } else if (state.screen.error) {
+    lines.push(style.error("Advisor unavailable"));
+    lines.push(state.screen.error);
+  } else if (state.screen.result) {
+    const result = state.screen.result;
+    lines.push(`Recommendation ${result.recommendation}`);
+    lines.push(`Confidence     ${result.confidence}`);
+    lines.push(`Summary        ${result.summary}`);
+    lines.push("");
+    lines.push(section("Risks", style));
+    lines.push(...(result.risks.length > 0 ? result.risks.map((risk) => `- ${risk}`) : ["none"]));
+    lines.push("");
+    lines.push(section("Missing Context", style));
+    lines.push(
+      ...(result.missing_context.length > 0
+        ? result.missing_context.map((context) => `- ${context}`)
+        : ["none"]),
+    );
+    if (result.suggested_deny_reason) {
+      lines.push("", `Suggested denial ${result.suggested_deny_reason}`);
+    }
+  } else {
+    lines.push("No advisor result.");
+  }
+
+  lines.push("", style.dim("a approve  d deny  r revoke  Esc back"));
   return lines.map((line) => truncate(line, width));
 }
 
@@ -219,6 +302,12 @@ function renderConfirmLines(state: AccessTuiState, width: number, style: Style):
     section("Verified Change", style),
     `Preset       ${item.preset}`,
     `Duration     ${item.duration}`,
+    item.current_access?.requested_preset_already_active
+      ? "Net new      none, already active"
+      : `Net new      ${item.preset}`,
+    item.current_access?.drift
+      ? style.warning("Warning      registry differs from live gateway")
+      : "",
     item.preset === "github"
       ? "Opens        github.com, api.github.com"
       : "Opens        preset-defined endpoints",
@@ -260,6 +349,7 @@ function renderHelpLines(width: number, style: Style): string[] {
     "",
     "↑/↓ j/k     Move",
     "Enter       Details / confirm",
+    "l           Ask configured LLM advisor about selected request",
     "a           Approve selected pending request",
     "d           Deny selected pending request",
     "r           Revoke pending or applied request",

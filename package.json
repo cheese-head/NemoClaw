@@ -26,6 +26,7 @@
     "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
     "@mariozechner/pi-tui": "^0.73.0",
     "js-yaml": "^4.1.1",
     "p-retry": "^4.6.2",
@@ -64,6 +65,7 @@
     "ajv": "^8.17.0",
     "eslint": "^10.1.0",
     "execa": "^9.6.1",
+    "playwright-chromium": "^1.59.1",
     "prettier": "^3.8.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",

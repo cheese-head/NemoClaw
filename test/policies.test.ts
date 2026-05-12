@@ -229,6 +229,61 @@ describe("policies", () => {
     });
   });
 
+  describe("gateway preset matching", () => {
+    it("matches built-in and custom preset policy keys in the same gateway policy", () => {
+      const github = requirePresetContent(policies.loadPreset("github"));
+      const githubKeys = policies.presetNetworkPolicyKeys(github);
+      expect(githubKeys.length).toBeGreaterThan(0);
+
+      const gatewayPolicyNames = new Set([
+        ...githubKeys,
+        "custom-internal-api",
+        "custom-internal-metrics",
+      ]);
+      const matched = policies.matchPresetNamesInPolicy(gatewayPolicyNames, [
+        { name: "github", content: github },
+        {
+          name: "internal-tools",
+          content:
+            "preset:\n" +
+            "  name: internal-tools\n" +
+            "network_policies:\n" +
+            "  custom-internal-api:\n" +
+            "    host: api.internal.example\n" +
+            "  custom-internal-metrics:\n" +
+            "    host: metrics.internal.example\n",
+        },
+      ]);
+
+      expect(matched).toContain("github");
+      expect(matched).toContain("internal-tools");
+    });
+
+    it("does not match a custom preset unless all of its policy keys are active", () => {
+      const matched = policies.matchPresetNamesInPolicy(new Set(["custom-internal-api"]), [
+        {
+          name: "internal-tools",
+          content:
+            "network_policies:\n" +
+            "  custom-internal-api:\n" +
+            "    host: api.internal.example\n" +
+            "  custom-internal-metrics:\n" +
+            "    host: metrics.internal.example\n",
+        },
+      ]);
+
+      expect(matched).not.toContain("internal-tools");
+    });
+
+    it("skips malformed custom preset content", () => {
+      const matched = policies.matchPresetNamesInPolicy(new Set(["custom-internal-api"]), [
+        { name: "broken-custom", content: "network_policies:\n  - not-an-object\n" },
+      ]);
+
+      expect(matched).toEqual([]);
+    });
+  });
+
   describe("applyPreset disclosure logging", () => {
     it("returns structured failure when preset does not exist", () => {
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1517,11 +1572,11 @@ setImmediate(() => {
 
     it("--from-dir skips hidden dotfile yaml presets", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-hidden-"));
+      fs.writeFileSync(path.join(dir, ".bad.yaml"), "preset:\n  name: bad\nnetwork_policies: {}\n");
       fs.writeFileSync(
-        path.join(dir, ".bad.yaml"),
-        "preset:\n  name: bad\nnetwork_policies: {}\n",
+        path.join(dir, "real.yaml"),
+        "preset:\n  name: real\nnetwork_policies: {}\n",
       );
-      fs.writeFileSync(path.join(dir, "real.yaml"), "preset:\n  name: real\nnetwork_policies: {}\n");
       const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
       expect(result.status).toBe(0);
       const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
@@ -1556,10 +1611,7 @@ setImmediate(() => {
 
   describe("interactive prompt cleanup", () => {
     it("releases stdin after preset prompts so the event loop drains on a TTY", () => {
-      const source = fs.readFileSync(
-        path.join(REPO_ROOT, "src", "lib", "policies.ts"),
-        "utf-8",
-      );
+      const source = fs.readFileSync(path.join(REPO_ROOT, "src", "lib", "policies.ts"), "utf-8");
       // A TTY-only guard around pause/unref pins the event loop on
       // interactive runs and stops the wizard from exiting after its last
       // prompt resolves.
@@ -1572,10 +1624,7 @@ setImmediate(() => {
     });
 
     it("re-refs stdin before each preset prompt so a follow-up prompt is not stranded by a sticky unref()", () => {
-      const source = fs.readFileSync(
-        path.join(REPO_ROOT, "src", "lib", "policies.ts"),
-        "utf-8",
-      );
+      const source = fs.readFileSync(path.join(REPO_ROOT, "src", "lib", "policies.ts"), "utf-8");
       // unref() above is sticky — a subsequent createInterface will not
       // re-ref by itself; an explicit ref() before each one keeps follow-up
       // prompts able to wait for input.
