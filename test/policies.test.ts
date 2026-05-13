@@ -130,6 +130,11 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
+    afterEach(() => {
+      delete process.env.NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON;
+      policies.clearProviderProfileCache?.();
+    });
+
     it("returns all 12 presets", () => {
       const presets = policies.listPresets();
       expect(presets.length).toBe(12);
@@ -163,9 +168,48 @@ describe("policies", () => {
       ];
       expect(names).toEqual(expected);
     });
+
+    it("adds OpenShell provider profiles as provider-backed presets", () => {
+      process.env.NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON = JSON.stringify({
+        profiles: [
+          {
+            id: "gitlab",
+            display_name: "GitLab",
+            description: "GitLab API and Git operations",
+            endpoints: [{ host: "gitlab.com", port: 443, protocol: "rest", access: "read-write" }],
+            binaries: ["/usr/bin/git"],
+          },
+          {
+            id: "empty-provider",
+            display_name: "Empty",
+            endpoints: [],
+          },
+        ],
+      });
+      policies.clearProviderProfileCache?.();
+
+      const presets = policies.listPresets();
+      expect(presets).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "gitlab",
+            file: "provider:gitlab",
+            provider_profile: "gitlab",
+          }),
+        ]),
+      );
+      expect(presets.some((preset: { name: string }) => preset.name === "empty-provider")).toBe(
+        false,
+      );
+    });
   });
 
   describe("loadPreset", () => {
+    afterEach(() => {
+      delete process.env.NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON;
+      policies.clearProviderProfileCache?.();
+    });
+
     it("loads existing preset", () => {
       const content = requirePresetContent(policies.loadPreset("outlook"));
       expect(content.includes("network_policies:")).toBeTruthy();
@@ -173,6 +217,41 @@ describe("policies", () => {
 
     it("returns null for nonexistent preset", () => {
       expect(policies.loadPreset("nonexistent")).toBe(null);
+    });
+
+    it("can synthesize preset YAML from an OpenShell provider profile", () => {
+      process.env.NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON = JSON.stringify([
+        {
+          id: "gitlab",
+          display_name: "GitLab",
+          description: "GitLab API and Git operations",
+          endpoints: [
+            {
+              host: "gitlab.com",
+              port: 443,
+              protocol: "rest",
+              access: "read-write",
+              enforcement: "enforce",
+            },
+          ],
+          binaries: ["/usr/bin/git", { path: "/usr/local/bin/glab" }],
+        },
+      ]);
+      policies.clearProviderProfileCache?.();
+
+      const content = requirePresetContent(policies.loadPreset("gitlab"));
+      const parsed = YAML.parse(content);
+      expect(parsed.preset.provider_profile).toBe("gitlab");
+      expect(parsed.network_policies.gitlab.endpoints[0]).toMatchObject({
+        host: "gitlab.com",
+        port: 443,
+        protocol: "rest",
+        access: "read-write",
+      });
+      expect(parsed.network_policies.gitlab.binaries).toEqual([
+        { path: "/usr/bin/git" },
+        { path: "/usr/local/bin/glab" },
+      ]);
     });
 
     it("rejects path traversal attempts", () => {
