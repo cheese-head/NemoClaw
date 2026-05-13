@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { OpenClawPluginApi } from "./index.js";
+import type { OpenClawPluginApi, PluginToolDefinition } from "./index.js";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(),
@@ -15,12 +15,29 @@ vi.mock("./onboard/config.js", () => ({
   describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
 }));
 
+vi.mock("./access-client.js", () => ({
+  createAccessRequest: vi.fn(),
+  getAccessRequest: vi.fn(),
+  listAccessPresets: vi.fn(),
+  waitAccessRequest: vi.fn(),
+}));
+
 import { execFileSync } from "node:child_process";
 import register, { getPluginConfig } from "./index.js";
 import { loadOnboardConfig } from "./onboard/config.js";
+import {
+  createAccessRequest,
+  getAccessRequest,
+  listAccessPresets,
+  waitAccessRequest,
+} from "./access-client.js";
 
 const mockedExecFileSync = vi.mocked(execFileSync);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
+const mockedCreateAccessRequest = vi.mocked(createAccessRequest);
+const mockedGetAccessRequest = vi.mocked(getAccessRequest);
+const mockedListAccessPresets = vi.mocked(listAccessPresets);
+const mockedWaitAccessRequest = vi.mocked(waitAccessRequest);
 
 function createMockApi(): OpenClawPluginApi {
   return {
@@ -38,9 +55,16 @@ function createMockApi(): OpenClawPluginApi {
     registerCommand: vi.fn(),
     registerProvider: vi.fn(),
     registerService: vi.fn(),
+    registerTool: vi.fn(),
     resolvePath: vi.fn((p: string) => p),
     on: vi.fn(),
   };
+}
+
+function getRegisteredTool(api: OpenClawPluginApi, name: string): PluginToolDefinition {
+  const call = vi.mocked(api.registerTool).mock.calls.find(([tool]) => tool.name === name);
+  expect(call).toBeDefined();
+  return call![0];
 }
 
 describe("plugin registration", () => {
@@ -48,6 +72,11 @@ describe("plugin registration", () => {
     vi.clearAllMocks();
     mockedExecFileSync.mockReset();
     mockedLoadOnboardConfig.mockReturnValue(null);
+    mockedCreateAccessRequest.mockReset();
+    mockedGetAccessRequest.mockReset();
+    mockedListAccessPresets.mockReset();
+    mockedWaitAccessRequest.mockReset();
+    delete process.env.OPENSHELL_POLICY_LOCAL_URL;
   });
 
   it("registers a slash command", () => {
@@ -60,6 +89,107 @@ describe("plugin registration", () => {
     const api = createMockApi();
     register(api);
     expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
+  });
+
+  it("registers OpenShell resource access tools", () => {
+    const api = createMockApi();
+    register(api);
+    expect(api.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "request_resource_access" }),
+    );
+    expect(api.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "list_resource_access_presets" }),
+    );
+    expect(api.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "check_resource_access" }),
+    );
+  });
+
+  it("list_resource_access_presets surfaces OpenShell provider profile backed presets", async () => {
+    mockedListAccessPresets.mockResolvedValue({
+      presets: [
+        { name: "github", description: "GitHub access", provider_profile: "github" },
+        { name: "outlook", description: "Outlook access", provider_profile: "outlook" },
+      ],
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "list_resource_access_presets");
+    const result = await tool.execute("call_1", {});
+
+    expect(mockedListAccessPresets).toHaveBeenCalledWith({});
+    expect(result).toEqual({
+      presets: [
+        { name: "github", description: "GitHub access", provider_profile: "github" },
+        { name: "outlook", description: "Outlook access", provider_profile: "outlook" },
+      ],
+    });
+  });
+
+  it("request_resource_access submits an OpenShell proposal and waits for approval", async () => {
+    mockedCreateAccessRequest.mockResolvedValue({
+      request_id: "chunk_123",
+      status: "pending_approval",
+      message: "Proposal submitted.",
+    });
+    mockedWaitAccessRequest.mockResolvedValue({
+      request_id: "chunk_123",
+      status: "applied",
+      message: "Approved.",
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "request_resource_access");
+    const result = await tool.execute("call_1", {
+      user_intent: "Inspect a repo",
+      resource: "github.com",
+      reason: "Need repository metadata.",
+    });
+
+    expect(mockedCreateAccessRequest).toHaveBeenCalledWith(
+      {
+        version: "nemoclaw.access.v1",
+        user_intent: "Inspect a repo",
+        llm_proposal: {
+          resource_type: "network",
+          preset: "github",
+          access: "read",
+          duration: "session",
+          reason: "Need repository metadata.",
+        },
+      },
+      {},
+    );
+    expect(mockedWaitAccessRequest).toHaveBeenCalledWith("chunk_123", 90_000, {});
+    expect(result).toEqual({
+      request_id: "chunk_123",
+      status: "applied",
+      message: "Approved.",
+    });
+  });
+
+  it("check_resource_access reads an existing OpenShell proposal status", async () => {
+    mockedGetAccessRequest.mockResolvedValue({
+      request_id: "chunk_123",
+      status: "denied",
+      message: "Rejected.",
+    });
+
+    const api = createMockApi();
+    register(api);
+    const tool = getRegisteredTool(api, "check_resource_access");
+    const result = await tool.execute("call_2", {
+      request_id: "chunk_123",
+    });
+
+    expect(mockedGetAccessRequest).toHaveBeenCalledWith("chunk_123", {});
+    expect(result).toEqual({
+      request_id: "chunk_123",
+      status: "denied",
+      message: "Rejected.",
+    });
   });
 
   it("continues registration when the runtime context hook is unsupported", () => {
