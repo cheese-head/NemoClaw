@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: huggingface
+display_name: Hugging Face
+description: Hugging Face Hub, LFS, and Inference API access
+category: knowledge
+endpoints:
+  - host: huggingface.co
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/**" }
+  - host: cdn-lfs.huggingface.co
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/**" }
+  - host: router.huggingface.co
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/**" }
+      - allow: { method: POST, path: "/**" }
+binaries:
+  - /usr/local/bin/python3
+  - /usr/local/bin/node
