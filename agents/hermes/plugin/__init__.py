@@ -16,8 +16,421 @@ skills automatically at session boundaries.
 
 import json
 import os
+import socket
 import subprocess
+import time
+from urllib.parse import quote, urlparse
 import yaml
+
+READ_METHODS = ["GET", "HEAD"]
+READ_WRITE_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
+DEFAULT_ACCESS_WAIT_MS = 90000
+MAX_ACCESS_WAIT_MS = 300000
+TERMINAL_ACCESS_STATUSES = {"applied", "denied", "failed"}
+PROVIDER_PROFILE_CACHE_SECONDS = 30
+_provider_preset_cache = {"loaded_at": 0.0, "presets": None}
+
+HERMES_BINARIES = [
+    {"path": "/usr/local/bin/hermes"},
+    {"path": "/opt/hermes/.venv/bin/python"},
+    {"path": "/usr/bin/python3*"},
+    {"path": "/usr/local/bin/python3*"},
+]
+
+FALLBACK_PRESETS = [
+    {
+        "name": "github",
+        "description": "GitHub.com and GitHub API access",
+        "provider_profile": "github",
+        "rule": {
+            "name": "github",
+            "endpoints": [
+                {"host": "github.com", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+                {"host": "api.github.com", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+            ],
+            "binaries": HERMES_BINARIES + [{"path": "/usr/bin/git"}, {"path": "/usr/bin/curl"}],
+        },
+    },
+    {
+        "name": "outlook",
+        "description": "Microsoft Outlook and Graph API access",
+        "provider_profile": "outlook",
+        "rule": {
+            "name": "outlook_graph",
+            "endpoints": [
+                {"host": "graph.microsoft.com", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+                {"host": "login.microsoftonline.com", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+                {"host": "outlook.office365.com", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+                {"host": "outlook.office.com", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+            ],
+            "binaries": HERMES_BINARIES,
+        },
+    },
+    {
+        "name": "pypi",
+        "description": "Python Package Index (PyPI) access",
+        "rule": {
+            "name": "pypi",
+            "endpoints": [
+                {"host": "pypi.org", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+                {"host": "files.pythonhosted.org", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+            ],
+            "binaries": HERMES_BINARIES + [{"path": "/usr/bin/pip*"}, {"path": "/usr/local/bin/pip*"}],
+        },
+    },
+    {
+        "name": "npm",
+        "description": "npm and Yarn registry access",
+        "rule": {
+            "name": "npm_yarn",
+            "endpoints": [
+                {"host": "registry.npmjs.org", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+                {"host": "registry.yarnpkg.com", "port": 443, "protocol": "rest", "enforcement": "enforce"},
+            ],
+            "binaries": HERMES_BINARIES + [{"path": "/usr/local/bin/node*"}, {"path": "/usr/bin/node*"}],
+        },
+    },
+    {
+        "name": "brave",
+        "description": "Brave Search API access",
+        "rule": {
+            "name": "brave",
+            "endpoints": [
+                {"host": "api.search.brave.com", "port": 443, "protocol": "rest", "enforcement": "enforce"}
+            ],
+            "binaries": HERMES_BINARIES + [{"path": "/usr/bin/curl"}],
+        },
+    },
+    {
+        "name": "local-inference",
+        "description": "Local inference access via host gateway",
+        "rule": {
+            "name": "local_inference",
+            "endpoints": [
+                {"host": "host.openshell.internal", "port": 11434, "protocol": "rest", "enforcement": "enforce"},
+                {"host": "host.openshell.internal", "port": 11435, "protocol": "rest", "enforcement": "enforce"},
+                {"host": "host.openshell.internal", "port": 8000, "protocol": "rest", "enforcement": "enforce"},
+            ],
+            "binaries": HERMES_BINARIES + [{"path": "/usr/bin/curl"}],
+        },
+    },
+]
+
+
+def _normalize_preset_name(resource):
+    normalized = str(resource or "").strip().lower()
+    if "://" in normalized:
+        try:
+            normalized = urlparse(normalized).hostname or normalized
+        except Exception:
+            pass
+    if normalized in {"github.com", "api.github.com"}:
+        return "github"
+    return normalized
+
+
+def _rules_for_access(access):
+    methods = READ_WRITE_METHODS if access == "read_write" else READ_METHODS
+    return [{"allow": {"method": method, "path": "/**"}} for method in methods]
+
+
+def _parse_provider_profiles_json(raw):
+    try:
+        parsed = json.loads(raw or "")
+    except Exception:
+        return []
+    candidates = parsed if isinstance(parsed, list) else parsed.get("profiles", []) if isinstance(parsed, dict) else []
+    return [p for p in candidates if isinstance(p, dict) and isinstance(p.get("id"), str)]
+
+
+def _read_provider_profiles():
+    raw = os.environ.get("NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON")
+    if raw:
+        return _parse_provider_profiles_json(raw)
+    try:
+        result = subprocess.run(
+            [os.environ.get("NEMOCLAW_OPENSHELL_BIN", "openshell"), "provider", "list-profiles", "-o", "json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return _parse_provider_profiles_json(result.stdout)
+    except Exception:
+        pass
+    return []
+
+
+def _provider_profile_to_preset(profile):
+    endpoints = []
+    for endpoint in profile.get("endpoints", []):
+        if not isinstance(endpoint, dict) or not isinstance(endpoint.get("host"), str):
+            continue
+        try:
+            port = int(endpoint.get("port"))
+        except Exception:
+            continue
+        if port <= 0:
+            continue
+        clean = {"host": endpoint["host"], "port": port}
+        for key in [
+            "protocol",
+            "tls",
+            "access",
+            "enforcement",
+            "rules",
+            "allowed_ips",
+            "ports",
+            "deny_rules",
+            "allow_encoded_slash",
+            "websocket_credential_rewrite",
+            "request_body_credential_rewrite",
+            "persisted_queries",
+            "graphql_persisted_queries",
+            "graphql_max_body_bytes",
+            "path",
+        ]:
+            value = endpoint.get(key)
+            if value not in (None, "", []):
+                clean[key] = value
+        endpoints.append(clean)
+    if not endpoints:
+        return None
+
+    binaries = []
+    for binary in profile.get("binaries", []):
+        path = binary if isinstance(binary, str) else binary.get("path") if isinstance(binary, dict) else None
+        if isinstance(path, str) and path:
+            binaries.append({"path": path})
+    if not binaries:
+        binaries = list(HERMES_BINARIES)
+    return {
+        "name": profile["id"],
+        "description": profile.get("description") or profile.get("display_name") or f"{profile['id']} provider profile",
+        "provider_profile": profile["id"],
+        "rule": {
+            "name": profile["id"].replace("-", "_"),
+            "endpoints": endpoints,
+            "binaries": binaries,
+        },
+    }
+
+
+def _provider_presets():
+    now = time.time()
+    cached = _provider_preset_cache.get("presets")
+    if cached is not None and now - _provider_preset_cache.get("loaded_at", 0) < PROVIDER_PROFILE_CACHE_SECONDS:
+        return cached
+    presets = [p for p in (_provider_profile_to_preset(profile) for profile in _read_provider_profiles()) if p]
+    _provider_preset_cache["loaded_at"] = now
+    _provider_preset_cache["presets"] = presets
+    return presets
+
+
+def _all_presets():
+    by_name = {preset["name"]: dict(preset) for preset in FALLBACK_PRESETS}
+    for preset in _provider_presets():
+        existing = by_name.get(preset["name"])
+        if existing:
+            existing["provider_profile"] = preset.get("provider_profile")
+        else:
+            by_name[preset["name"]] = preset
+    return [by_name[name] for name in sorted(by_name)]
+
+
+def _rule_for_access_request(params):
+    preset_name = _normalize_preset_name(params.get("resource"))
+    preset = next((p for p in _all_presets() if p["name"] == preset_name), None)
+    if not preset:
+        raise ValueError(f"Unknown access preset '{params.get('resource')}'.")
+    access = "read_write" if params.get("access") == "read_write" else "read"
+    rule = json.loads(json.dumps(preset["rule"]))
+    for endpoint in rule.get("endpoints", []):
+        if endpoint.get("access") == "full" or endpoint.get("tls") == "skip":
+            continue
+        endpoint.pop("access", None)
+        endpoint.setdefault("rules", _rules_for_access(access))
+    return rule
+
+
+def _proposal_body(params):
+    rule = _rule_for_access_request(params)
+    intent = " ".join(filter(None, [str(params.get("user_intent") or ""), str(params.get("reason") or "")]))
+    return {"intent_summary": intent, "operations": [{"addRule": {"ruleName": rule["name"], "rule": rule}}]}
+
+
+def _policy_local_base():
+    return urlparse(os.environ.get("OPENSHELL_POLICY_LOCAL_URL", "http://policy.local"))
+
+
+def _http_proxy():
+    raw = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    return parsed if parsed.scheme == "http" and parsed.hostname else None
+
+
+def _decode_chunked(body):
+    output = b""
+    rest = body
+    while True:
+        marker = rest.find(b"\r\n")
+        if marker < 0:
+            return body
+        size_text = rest[:marker].split(b";", 1)[0]
+        try:
+            size = int(size_text, 16)
+        except Exception:
+            return body
+        rest = rest[marker + 2 :]
+        if size == 0:
+            return output
+        output += rest[:size]
+        rest = rest[size + 2 :]
+
+
+def _policy_local_json(method, path, payload=None, timeout=310):
+    base = _policy_local_base()
+    if base.scheme != "http":
+        raise RuntimeError("OpenShell policy.local URL must use HTTP inside the sandbox.")
+    body = json.dumps(payload).encode("utf-8") if payload is not None else b""
+    proxy = _http_proxy() if base.hostname == "policy.local" else None
+    host = proxy.hostname if proxy else base.hostname
+    port = proxy.port if proxy and proxy.port else 80 if proxy else base.port or 80
+    target = f"http://policy.local:80{(base.path or '').rstrip('/')}{path}" if proxy else f"{(base.path or '').rstrip('/')}{path}"
+    headers = [
+        f"{method} {target} HTTP/1.1",
+        f"Host: {base.netloc or base.hostname}",
+        "Accept: application/json",
+        "Connection: close",
+    ]
+    if payload is not None:
+        headers += ["Content-Type: application/json", f"Content-Length: {len(body)}"]
+    request = ("\r\n".join(headers) + "\r\n\r\n").encode("utf-8") + body
+    with socket.create_connection((host, port), timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        sock.sendall(request)
+        response = b""
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            response += chunk
+    header_end = response.find(b"\r\n\r\n")
+    if header_end < 0:
+        raise RuntimeError(f"OpenShell policy.local {method} {path} returned malformed HTTP")
+    header = response[:header_end].decode("iso-8859-1")
+    raw_body = response[header_end + 4 :]
+    status_line = header.splitlines()[0] if header else ""
+    try:
+        status = int(status_line.split()[1])
+    except Exception:
+        status = 0
+    if "transfer-encoding: chunked" in header.lower():
+        raw_body = _decode_chunked(raw_body)
+    text = raw_body.decode("utf-8")
+    if status < 200 or status >= 300:
+        raise RuntimeError(f"OpenShell policy.local {method} {path} failed with HTTP {status}: {text}")
+    return json.loads(text or "{}")
+
+
+def _map_chunk_status(status, policy_reloaded):
+    if status == "approved":
+        return "applied" if policy_reloaded is True else "pending_approval"
+    if status == "rejected":
+        return "denied"
+    if status == "pending":
+        return "pending_approval"
+    return "failed"
+
+
+def _create_access_request(params):
+    parsed = _policy_local_json("POST", "/v1/proposals", _proposal_body(params))
+    accepted = parsed.get("accepted_chunk_ids") if isinstance(parsed.get("accepted_chunk_ids"), list) else []
+    request_id = next((item for item in accepted if isinstance(item, str) and item), "")
+    if not request_id:
+        return {
+            "request_id": "",
+            "status": "failed",
+            "message": f"OpenShell rejected the proposal: {json.dumps(parsed.get('rejection_reasons', []))}",
+        }
+    return {
+        "request_id": request_id,
+        "status": "pending_approval",
+        "message": "Proposal submitted to OpenShell; waiting for operator approval.",
+    }
+
+
+def _get_access_request(request_id, wait_timeout_ms=0):
+    suffix = f"/wait?timeout={max(1, min(300, int((wait_timeout_ms + 999) / 1000)))}" if wait_timeout_ms > 0 else ""
+    parsed = _policy_local_json("GET", f"/v1/proposals/{quote(request_id)}{suffix}", timeout=max(310, int(wait_timeout_ms / 1000) + 10))
+    request_id = parsed.get("chunk_id") if isinstance(parsed.get("chunk_id"), str) else request_id
+    return {
+        "request_id": request_id,
+        "status": _map_chunk_status(parsed.get("status"), parsed.get("policy_reloaded")),
+        "message": parsed.get("rejection_reason") or parsed.get("validation_result"),
+        "canonical_request": parsed,
+    }
+
+
+def _clamp_wait_timeout(value, fallback):
+    try:
+        timeout = int(value)
+    except Exception:
+        timeout = fallback
+    if timeout <= 0:
+        return 0
+    return min(timeout, MAX_ACCESS_WAIT_MS)
+
+
+def _tool_result(response):
+    result = {
+        "request_id": response.get("request_id", ""),
+        "status": response.get("status", "failed"),
+        "message": response.get("message")
+        or (
+            "OpenShell returned a terminal access status."
+            if response.get("status") in TERMINAL_ACCESS_STATUSES
+            else "Access request is still pending; call check_resource_access with the request_id to continue polling."
+        ),
+    }
+    if response.get("canonical_request"):
+        result["canonical_request"] = response["canonical_request"]
+    return result
+
+
+def _handle_list_access_presets(tool_input=None, context=None, **_kwargs):
+    return json.dumps(
+        {
+            "presets": [
+                {
+                    "name": preset["name"],
+                    "description": preset["description"],
+                    **({"provider_profile": preset["provider_profile"]} if preset.get("provider_profile") else {}),
+                }
+                for preset in _all_presets()
+            ]
+        }
+    )
+
+
+def _handle_request_resource_access(tool_input=None, context=None, **_kwargs):
+    params = tool_input if isinstance(tool_input, dict) else {}
+    response = _create_access_request(params)
+    timeout = _clamp_wait_timeout(params.get("wait_timeout_ms"), DEFAULT_ACCESS_WAIT_MS)
+    if response.get("status") not in TERMINAL_ACCESS_STATUSES and timeout > 0 and response.get("request_id"):
+        response = _get_access_request(response["request_id"], timeout)
+    return json.dumps(_tool_result(response))
+
+
+def _handle_check_resource_access(tool_input=None, context=None, **_kwargs):
+    params = tool_input if isinstance(tool_input, dict) else {}
+    request_id = params.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        return json.dumps({"request_id": "", "status": "failed", "message": "Missing request_id."})
+    timeout = _clamp_wait_timeout(params.get("wait_timeout_ms"), 0)
+    return json.dumps(_tool_result(_get_access_request(request_id, timeout)))
 
 
 def _load_nemoclaw_config():
@@ -212,6 +625,92 @@ def register(ctx):
         description="Reload skills from disk without gateway restart",
     )
 
+    ctx.register_tool(
+        name="list_resource_access_presets",
+        toolset="nemoclaw",
+        schema={
+            "type": "function",
+            "function": {
+                "name": "list_resource_access_presets",
+                "description": (
+                    "List resource-access preset ids currently accepted for "
+                    "OpenShell access proposals."
+                ),
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+        },
+        handler=_handle_list_access_presets,
+        description="List OpenShell resource-access presets",
+    )
+
+    ctx.register_tool(
+        name="request_resource_access",
+        toolset="nemoclaw",
+        schema={
+            "type": "function",
+            "function": {
+                "name": "request_resource_access",
+                "description": (
+                    "Request least-privilege external resource access through "
+                    "OpenShell. The resource field must be a preset id; call "
+                    "list_resource_access_presets first if unsure."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["user_intent", "resource", "reason"],
+                    "properties": {
+                        "user_intent": {"type": "string"},
+                        "resource": {"type": "string"},
+                        "access": {"type": "string", "enum": ["read", "read_write"], "default": "read"},
+                        "reason": {"type": "string"},
+                        "duration": {"type": "string", "enum": ["session", "persistent"], "default": "session"},
+                        "task_id": {"type": "string"},
+                        "wait_timeout_ms": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": MAX_ACCESS_WAIT_MS,
+                            "default": DEFAULT_ACCESS_WAIT_MS,
+                        },
+                    },
+                },
+            },
+        },
+        handler=_handle_request_resource_access,
+        description="Request OpenShell resource access",
+    )
+
+    ctx.register_tool(
+        name="check_resource_access",
+        toolset="nemoclaw",
+        schema={
+            "type": "function",
+            "function": {
+                "name": "check_resource_access",
+                "description": (
+                    "Check or continue waiting for an OpenShell access proposal. "
+                    "This reports status only and cannot approve or modify access."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["request_id"],
+                    "properties": {
+                        "request_id": {"type": "string"},
+                        "wait_timeout_ms": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": MAX_ACCESS_WAIT_MS,
+                            "default": 0,
+                        },
+                    },
+                },
+            },
+        },
+        handler=_handle_check_resource_access,
+        description="Check OpenShell resource-access request",
+    )
+
     # Startup banner on session start
     def _on_session_start(**kwargs):
         # Refresh skill cache so skills installed since last session are
@@ -227,8 +726,7 @@ def register(ctx):
             f"  \u2502  Model:     {info['model']:<40}\u2502\n"
             f"  \u2502  Provider:  {info['provider']:<40}\u2502\n"
             f"  \u2502  Gateway:   {info['gateway']:<40}\u2502\n"
-            "  \u2502  Tools:     nemoclaw_status, nemoclaw_info,         \u2502\n"
-            "  \u2502             nemoclaw_reload_skills                   \u2502\n"
+            "  \u2502  Tools:     status/info/reload + resource access    \u2502\n"
             "  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n"
         )
         try:

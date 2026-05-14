@@ -11,6 +11,9 @@ provides_tools:
   - nemoclaw_status
   - nemoclaw_info
   - nemoclaw_reload_skills
+  - list_resource_access_presets
+  - request_resource_access
+  - check_resource_access
 
 provides_hooks:
   - on_session_start
