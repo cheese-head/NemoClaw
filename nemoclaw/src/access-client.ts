@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import http from "node:http";
+import net from "node:net";
 
 export type AccessStatus = "pending_approval" | "applied" | "denied" | "failed";
 
@@ -71,9 +73,40 @@ type AccessPreset = AccessPresetInfo & {
   rule: NetworkRule;
 };
 
+type ProviderProfileEndpoint = {
+  host?: unknown;
+  port?: unknown;
+  protocol?: unknown;
+  tls?: unknown;
+  access?: unknown;
+  enforcement?: unknown;
+  rules?: unknown;
+  allowed_ips?: unknown;
+  ports?: unknown;
+  deny_rules?: unknown;
+  allow_encoded_slash?: unknown;
+  websocket_credential_rewrite?: unknown;
+  request_body_credential_rewrite?: unknown;
+  persisted_queries?: unknown;
+  graphql_persisted_queries?: unknown;
+  graphql_max_body_bytes?: unknown;
+  path?: unknown;
+};
+
+type ProviderProfile = {
+  id: string;
+  display_name?: string;
+  description?: string;
+  endpoints?: ProviderProfileEndpoint[];
+  binaries?: Array<string | { path?: unknown }>;
+};
+
 const NODE_BINARIES = [{ path: "/usr/local/bin/node" }, { path: "/usr/bin/node" }];
 const READ_METHODS = ["GET", "HEAD"];
 const READ_WRITE_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
+const PROVIDER_PROFILE_CACHE_MS = 30_000;
+
+let cachedProviderPresets: { loadedAt: number; presets: AccessPreset[] } | null = null;
 
 const PRESETS: AccessPreset[] = [
   {
@@ -225,6 +258,155 @@ const PRESETS: AccessPreset[] = [
   },
 ];
 
+function openshellBinary(): string {
+  return process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+}
+
+function parseProviderProfilesJson(raw: string): ProviderProfile[] {
+  if (!raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+
+  const candidates = Array.isArray(parsed)
+    ? parsed
+    : parsed &&
+        typeof parsed === "object" &&
+        Array.isArray((parsed as { profiles?: unknown }).profiles)
+      ? (parsed as { profiles: unknown[] }).profiles
+      : [];
+
+  return candidates
+    .filter((value): value is Record<string, unknown> => {
+      return typeof value === "object" && value !== null && typeof value.id === "string";
+    })
+    .map((profile) => ({
+      id: String(profile.id),
+      display_name: typeof profile.display_name === "string" ? profile.display_name : undefined,
+      description: typeof profile.description === "string" ? profile.description : undefined,
+      endpoints: Array.isArray(profile.endpoints)
+        ? (profile.endpoints as ProviderProfileEndpoint[])
+        : [],
+      binaries: Array.isArray(profile.binaries)
+        ? (profile.binaries as Array<string | { path?: unknown }>)
+        : [],
+    }));
+}
+
+function providerBinaryPath(binary: string | { path?: unknown }): string | null {
+  if (typeof binary === "string") return binary;
+  if (binary && typeof binary.path === "string") return binary.path;
+  return null;
+}
+
+function cleanProviderEndpoint(endpoint: ProviderProfileEndpoint): NetworkEndpoint | null {
+  if (typeof endpoint.host !== "string" || Number(endpoint.port) <= 0) return null;
+  const output: NetworkEndpoint = {
+    host: endpoint.host,
+    port: Number(endpoint.port),
+  };
+  for (const key of [
+    "protocol",
+    "tls",
+    "access",
+    "enforcement",
+    "rules",
+    "allowed_ips",
+    "ports",
+    "deny_rules",
+    "allow_encoded_slash",
+    "websocket_credential_rewrite",
+    "request_body_credential_rewrite",
+    "persisted_queries",
+    "graphql_persisted_queries",
+    "graphql_max_body_bytes",
+    "path",
+  ] as const) {
+    const value = endpoint[key];
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== "" &&
+      !(Array.isArray(value) && value.length === 0)
+    ) {
+      (output as Record<string, unknown>)[key] = value;
+    }
+  }
+  return output;
+}
+
+function providerProfileToPreset(profile: ProviderProfile): AccessPreset | null {
+  const endpoints = (profile.endpoints || [])
+    .map(cleanProviderEndpoint)
+    .filter((endpoint): endpoint is NetworkEndpoint => endpoint !== null);
+  if (endpoints.length === 0) return null;
+
+  const binaries = (profile.binaries || [])
+    .map(providerBinaryPath)
+    .filter((binary): binary is string => Boolean(binary))
+    .map((path) => ({ path }));
+
+  const ruleName = profile.id.replace(/-/g, "_");
+  return {
+    name: profile.id,
+    description: profile.description || profile.display_name || `${profile.id} provider profile`,
+    provider_profile: profile.id,
+    rule: {
+      name: ruleName,
+      endpoints,
+      binaries,
+    },
+  };
+}
+
+function readProviderProfilesFromOpenShell(): ProviderProfile[] {
+  if (process.env.NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON) {
+    return parseProviderProfilesJson(process.env.NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON);
+  }
+  try {
+    const raw = execFileSync(openshellBinary(), ["provider", "list-profiles", "-o", "json"], {
+      encoding: "utf-8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return parseProviderProfilesJson(raw);
+  } catch {
+    return [];
+  }
+}
+
+function listProviderProfilePresets(): AccessPreset[] {
+  const now = Date.now();
+  if (cachedProviderPresets && now - cachedProviderPresets.loadedAt < PROVIDER_PROFILE_CACHE_MS) {
+    return cachedProviderPresets.presets;
+  }
+  const presets = readProviderProfilesFromOpenShell()
+    .map(providerProfileToPreset)
+    .filter((preset): preset is AccessPreset => preset !== null);
+  cachedProviderPresets = { loadedAt: now, presets };
+  return presets;
+}
+
+function allPresets(): AccessPreset[] {
+  const byName = new Map<string, AccessPreset>();
+  for (const preset of PRESETS) byName.set(preset.name, preset);
+  for (const preset of listProviderProfilePresets()) {
+    const existing = byName.get(preset.name);
+    byName.set(
+      preset.name,
+      existing ? { ...existing, provider_profile: preset.provider_profile } : preset,
+    );
+  }
+  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function clearAccessPresetCache(): void {
+  cachedProviderPresets = null;
+}
+
 function normalizePresetName(resource: string): string {
   const normalized = resource.trim().toLowerCase();
   const host = (() => {
@@ -250,7 +432,7 @@ function rulesForAccess(access: "read" | "read_write"): L7Rule[] {
 
 function ruleForRequest(body: CreateAccessRequestBody): NetworkRule {
   const presetName = normalizePresetName(body.llm_proposal.preset);
-  const preset = PRESETS.find((candidate) => candidate.name === presetName);
+  const preset = allPresets().find((candidate) => candidate.name === presetName);
   if (!preset) {
     throw new Error(`Unknown access preset '${body.llm_proposal.preset}'.`);
   }
@@ -295,8 +477,8 @@ function parseJsonObject(raw: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-function mapChunkStatus(status: unknown): AccessStatus {
-  if (status === "approved") return "applied";
+function mapChunkStatus(status: unknown, policyReloaded: unknown): AccessStatus {
+  if (status === "approved") return policyReloaded === true ? "applied" : "pending_approval";
   if (status === "rejected") return "denied";
   if (status === "pending") return "pending_approval";
   return "failed";
@@ -324,23 +506,27 @@ function requestJson<T>(
     headers["Content-Length"] = Buffer.byteLength(payload);
   }
 
+  const proxy = base.hostname === "policy.local" ? proxyUrl() : null;
+  if (proxy) {
+    return requestJsonViaHttpProxy(
+      method,
+      base,
+      requestPath,
+      headers,
+      payload,
+      options,
+      parseResponse,
+    );
+  }
+
   return new Promise((resolve, reject) => {
-    const proxy = base.hostname === "policy.local" ? proxyUrl() : null;
     const req = http.request(
       {
         method,
-        protocol: proxy?.protocol ?? base.protocol,
-        hostname: proxy?.hostname ?? base.hostname,
-        port:
-          proxy?.port !== undefined && proxy.port !== ""
-            ? Number(proxy.port)
-            : base.port === ""
-              ? undefined
-              : Number(base.port),
-        path:
-          proxy === null
-            ? `${base.pathname.replace(/\/$/, "")}${requestPath}`
-            : `${base.origin}${base.pathname.replace(/\/$/, "")}${requestPath}`,
+        protocol: base.protocol,
+        hostname: base.hostname,
+        port: base.port === "" ? undefined : Number(base.port),
+        path: `${base.pathname.replace(/\/$/, "")}${requestPath}`,
         headers,
         timeout: options.timeoutMs ?? 310_000,
       },
@@ -375,6 +561,80 @@ function requestJson<T>(
   });
 }
 
+function requestJsonViaHttpProxy<T>(
+  method: "GET" | "POST",
+  base: URL,
+  requestPath: string,
+  headers: Record<string, string | number>,
+  payload: string | undefined,
+  options: AccessClientOptions,
+  parseResponse: (raw: string) => T,
+): Promise<T> {
+  const proxy = proxyUrl();
+  if (!proxy) {
+    return Promise.reject(new Error("HTTP proxy is not configured."));
+  }
+
+  const target = `http://policy.local:80${base.pathname.replace(/\/$/, "")}${requestPath}`;
+  const timeoutMs = options.timeoutMs ?? 310_000;
+  const proxyPort = proxy.port ? Number(proxy.port) : 80;
+  const headerLines = Object.entries(headers).map(([key, value]) => `${key}: ${value}`);
+  const requestBytes = [
+    `${method} ${target} HTTP/1.1`,
+    ...headerLines,
+    "Connection: close",
+    "",
+    payload ?? "",
+  ].join("\r\n");
+
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host: proxy.hostname, port: proxyPort });
+    const chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      socket.destroy(new Error(`OpenShell policy.local ${method} ${requestPath} timed out`));
+    }, timeoutMs);
+
+    socket.on("connect", () => {
+      socket.write(requestBytes);
+    });
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    socket.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    socket.on("end", () => {
+      clearTimeout(timer);
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      if (headerEnd === -1) {
+        reject(
+          new Error(
+            `OpenShell policy.local ${method} ${requestPath} returned a malformed HTTP response`,
+          ),
+        );
+        return;
+      }
+      const header = raw.slice(0, headerEnd);
+      const body = raw.slice(headerEnd + 4);
+      const statusLine = header.split("\r\n")[0] ?? "";
+      const statusCode = Number(statusLine.split(/\s+/)[1]);
+      if (!Number.isFinite(statusCode) || statusCode < 200 || statusCode >= 300) {
+        reject(
+          new Error(
+            `OpenShell policy.local ${method} ${requestPath} failed with HTTP ${Number.isFinite(statusCode) ? statusCode : "unknown"}: ${body}`,
+          ),
+        );
+        return;
+      }
+      try {
+        resolve(parseResponse(body));
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
 function proposalBody(body: CreateAccessRequestBody): Record<string, unknown> {
   const rule = ruleForRequest(body);
   return {
@@ -406,7 +666,7 @@ function parseStateResponse(raw: string): AccessRequestResponse {
   const requestId = typeof parsed.chunk_id === "string" ? parsed.chunk_id : "";
   return {
     request_id: requestId,
-    status: mapChunkStatus(parsed.status),
+    status: mapChunkStatus(parsed.status, parsed.policy_reloaded),
     message:
       typeof parsed.rejection_reason === "string" && parsed.rejection_reason
         ? parsed.rejection_reason
@@ -456,7 +716,7 @@ export function listAccessPresets(
   _options: AccessClientOptions = {},
 ): Promise<AccessPresetsResponse> {
   return Promise.resolve({
-    presets: PRESETS.map(({ name, description, provider_profile }) => ({
+    presets: allPresets().map(({ name, description, provider_profile }) => ({
       name,
       description,
       ...(provider_profile ? { provider_profile } : {}),
