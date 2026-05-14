@@ -1214,6 +1214,14 @@ function shouldAllowOpenshellAboveBlueprintMax(
   return shouldUseOpenshellDevChannel(platform, env) && isOpenshellDevVersion(versionOutput);
 }
 
+function shouldAllowOpenshellBelowBlueprintMin(
+  versionOutput: string | null | undefined,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return shouldUseOpenshellDevChannel(platform, env) && isOpenshellDevVersion(versionOutput);
+}
+
 type SandboxGpuMode = "auto" | "1" | "0";
 type SandboxGpuFlag = "enable" | "disable" | null;
 
@@ -2772,6 +2780,7 @@ function getOpenShellInstallDeps(): OpenShellInstallDeps {
     shouldUseOpenshellDevChannel,
     isOpenshellDevVersion,
     versionGte,
+    shouldAllowOpenshellBelowBlueprintMin,
     shouldAllowOpenshellAboveBlueprintMax,
     cliDisplayName,
     log: console.log,
@@ -11025,6 +11034,7 @@ module.exports = {
   getResumeSandboxGpuOverrides,
   getSandboxReadyTimeoutSecs,
   resolveSandboxGpuConfig,
+  shouldAllowOpenshellBelowBlueprintMin,
   shouldAllowOpenshellAboveBlueprintMax,
   pullAndResolveBaseImageDigest,
   SANDBOX_BASE_IMAGE,

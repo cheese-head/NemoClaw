@@ -258,7 +258,10 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const localBin = path.join(tmp, "usr", "local", "bin");
     const localLib = path.join(tmp, "usr", "local", "lib", "nemoclaw");
     const localShare = path.join(tmp, "usr", "local", "share", "nemoclaw");
+    const optNemoclaw = path.join(tmp, "opt", "nemoclaw");
     const pluginDir = path.join(localShare, "openclaw-plugins", "kimi-inference-compat");
+    const mainPluginDir = path.join(localShare, "openclaw-plugins", "nemoclaw");
+    const mainPluginFile = path.join(mainPluginDir, "dist", "index.js");
     const pluginFile = path.join(pluginDir, "index.js");
     const nestedPluginDir = path.join(pluginDir, "lib");
     const nestedPluginFile = path.join(nestedPluginDir, "helper.js");
@@ -274,6 +277,10 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(path.join(optNemoclaw, "dist"), { recursive: true });
+      fs.writeFileSync(path.join(optNemoclaw, "dist", "index.js"), "# fixture\n", {
+        mode: 0o600,
+      });
       fs.mkdirSync(nestedPluginDir, { recursive: true });
       for (const file of files) {
         fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
@@ -287,7 +294,8 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       )
         .replaceAll("/usr/local/bin", localBin)
         .replaceAll("/usr/local/lib/nemoclaw", localLib)
-        .replaceAll("/usr/local/share/nemoclaw", localShare);
+        .replaceAll("/usr/local/share/nemoclaw", localShare)
+        .replaceAll("/opt/nemoclaw", optNemoclaw);
       const { result } = runLoggedDockerShell(command, tmp);
 
       expect(result.status, result.stderr).toBe(0);
@@ -296,11 +304,15 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       ).toString(8);
       const pluginDirMode = (fs.statSync(pluginDir).mode & 0o777).toString(8);
       const pluginMode = (fs.statSync(pluginFile).mode & 0o777).toString(8);
+      const mainPluginDirMode = (fs.statSync(mainPluginDir).mode & 0o777).toString(8);
+      const mainPluginMode = (fs.statSync(mainPluginFile).mode & 0o777).toString(8);
       const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
       const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");
+      expect(mainPluginDirMode).toBe("755");
+      expect(mainPluginMode).toBe("644");
       expect(nestedPluginDirMode).toBe("755");
       expect(nestedPluginMode).toBe("644");
     } finally {
