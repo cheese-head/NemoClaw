@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: npm
+display_name: npm
+description: npm and Yarn registry access
+category: data
+endpoints:
+  - host: registry.npmjs.org
+    port: 443
+    access: full
+    tls: skip
+  - host: registry.yarnpkg.com
+    port: 443
+    access: full
+    tls: skip
+binaries:
+  - /usr/local/bin/npm*
+  - /usr/local/bin/npx*
+  - /usr/local/bin/node*
+  - /usr/local/bin/yarn*
+  - /usr/bin/npm*
+  - /usr/bin/node*

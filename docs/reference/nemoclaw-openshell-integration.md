@@ -18,7 +18,9 @@ flowchart LR
 
   adapter --> adapters
   adapters --> plugin_tools
-  list --> profiles["OpenShell provider profiles"]
+  onboard["nemoclaw onboard"] --> profile_import["Import NemoClaw provider profiles"]
+  profile_import --> profiles["OpenShell provider profiles"]
+  list --> profiles
   profiles --> presets["Provider-backed access presets"]
   presets --> request
 
@@ -47,12 +49,13 @@ flowchart LR
 ## Flow
 
 1. The agent asks NemoClaw for allowed resource presets with `list_resource_access_presets`.
-2. NemoClaw builds that list from OpenShell provider profiles, with built-in presets as fallback coverage.
-3. The agent calls `request_resource_access` with a preset, access mode, reason, and optional wait timeout.
-4. NemoClaw submits a least-privilege proposal to `policy.local`.
-5. OpenShell surfaces the proposal for operator review.
-6. After approval, OpenShell merges and reloads the sandbox policy.
-7. The agent calls `check_resource_access`; NemoClaw reports `applied` only after OpenShell reports the policy reload is complete.
+2. During onboarding, NemoClaw imports its provider profiles into OpenShell for package registries, messaging platforms, Brave Search, Jira, Hugging Face, and local inference.
+3. NemoClaw builds the agent-visible preset list from OpenShell provider profiles, with built-in presets as fallback coverage for older OpenShell versions.
+4. The agent calls `request_resource_access` with a preset, access mode, reason, and optional wait timeout.
+5. NemoClaw submits a least-privilege proposal to `policy.local`.
+6. OpenShell surfaces the proposal for operator review.
+7. After approval, OpenShell merges and reloads the sandbox policy.
+8. The agent calls `check_resource_access`; NemoClaw reports `applied` only after OpenShell reports the policy reload is complete.
 
 ## Agent Tools
 
@@ -63,3 +66,7 @@ flowchart LR
 ## Adapter Contract
 
 Each agent adapter exposes the same tool names and response shape through the harness-native mechanism. OpenClaw uses its plugin API. Hermes uses its Python plugin API. Additional harnesses can implement the same contract without changing the OpenShell policy proposal flow.
+
+## Provider Profiles
+
+NemoClaw imports OpenShell provider profiles for its policy presets during onboarding. Existing OpenShell profiles are left untouched, and already-imported NemoClaw profiles are skipped so repeated onboarding remains idempotent. If the OpenShell gateway does not support provider-profile import, NemoClaw continues with local fallback presets.
