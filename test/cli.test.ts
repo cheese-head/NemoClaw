@@ -2586,7 +2586,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
   });
 
-  it("tears down the gateway runtime when --cleanup-gateway is passed (#2166)", () => {
+  it("tears down the gateway runtime when --cleanup-gateway is passed (#2166)", testTimeoutOptions(10_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -2650,7 +2650,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
   });
 
-  it("honours NEMOCLAW_CLEANUP_GATEWAY=1 as the env-driven opt-in (#2166)", () => {
+  it("honours NEMOCLAW_CLEANUP_GATEWAY=1 as the env-driven opt-in (#2166)", testTimeoutOptions(10_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-env-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");

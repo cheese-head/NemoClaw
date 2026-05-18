@@ -287,6 +287,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const localBin = path.join(tmp, "usr", "local", "bin");
     const localLib = path.join(tmp, "usr", "local", "lib", "nemoclaw");
     const localShare = path.join(tmp, "usr", "local", "share", "nemoclaw");
+    const localOptNemoclaw = path.join(tmp, "opt", "nemoclaw");
     const pluginDir = path.join(localShare, "openclaw-plugins", "kimi-inference-compat");
     const pluginFile = path.join(pluginDir, "index.js");
     const nestedPluginDir = path.join(pluginDir, "lib");
@@ -305,7 +306,11 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(localOptNemoclaw, { recursive: true });
       fs.mkdirSync(nestedPluginDir, { recursive: true });
+      fs.writeFileSync(path.join(localOptNemoclaw, "openclaw.plugin.json"), "{}\n", {
+        mode: 0o600,
+      });
       for (const file of files) {
         fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
         fs.chmodSync(file, 0o600);
@@ -318,6 +323,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       )
         .replaceAll("/usr/local/bin", localBin)
         .replaceAll("/usr/local/lib/nemoclaw", localLib)
+        .replaceAll("/opt/nemoclaw", localOptNemoclaw)
         .replaceAll("/usr/local/share/nemoclaw", localShare);
       const { result } = runLoggedDockerShell(command, tmp);
 

@@ -416,6 +416,18 @@ scripts:
     bucket: providers-messaging
     zero_assertion_review: dynamic PASS/FAIL assertions cover OpenClaw and Hermes across telegram, discord, wechat, and slack; pending scenario-framework migration
     assertions: []
+  test-hermes-policy-local-plugin.sh:
+    scenario: ubuntu-repo-cloud-hermes
+    status: deferred
+    bucket: final-security-policy-platform-misc
+    zero_assertion_review: live policy.local proposal flow uses jq/exit-code assertions without PASS/FAIL markers; pending scenario-framework migration
+    assertions: []
+  test-nemoclaw-policy-local-plugin.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: deferred
+    bucket: final-security-policy-platform-misc
+    zero_assertion_review: live policy.local proposal flow uses jq/exit-code assertions without PASS/FAIL markers; pending scenario-framework migration
+    assertions: []
   test-credential-migration.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
