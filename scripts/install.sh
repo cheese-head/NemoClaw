@@ -51,7 +51,7 @@ resolve_installer_version() {
     return
   fi
   # Prefer git tags (works in dev clones and CI)
-  if command -v git &>/dev/null && [[ -d "${repo_root}/.git" ]]; then
+  if command -v git &>/dev/null && [[ -e "${repo_root}/.git" ]]; then
     local git_ver=""
     if git_ver="$(git -C "$repo_root" describe --tags --match 'v*' 2>/dev/null)"; then
       git_ver="${git_ver#v}"
@@ -1356,7 +1356,7 @@ is_source_checkout() {
     return 1
   fi
 
-  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -d "${repo_root}/.git" ]]; then
+  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -e "${repo_root}/.git" ]]; then
     return 0
   fi
 
@@ -1998,6 +1998,10 @@ ensure_docker() {
   # skip the group setup entirely and just verify the daemon is reachable.
   if [ "$(id -u)" -eq 0 ]; then
     if ! docker info >/dev/null 2>&1; then
+      if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+        warn "Docker is installed but not reachable; onboarding preflight will report remediation after install."
+        return 0
+      fi
       error "Docker is installed but not reachable. Try: systemctl start docker"
     fi
     return 0
@@ -2033,6 +2037,10 @@ ensure_docker() {
   fi
 
   if ! docker info >/dev/null 2>&1; then
+    if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+      warn "Docker is installed but not reachable; onboarding preflight will report remediation after install."
+      return 0
+    fi
     error "Docker is installed but not reachable. Try: sudo systemctl start docker"
   fi
 }

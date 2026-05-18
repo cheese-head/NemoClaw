@@ -17,11 +17,42 @@ const { loadAgent } = require("../agent/defs");
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
 const MAX_PRESET_FILE_BYTES = 10_000_000;
+const PROVIDER_PROFILE_PRESET_PREFIX = "provider:";
+let cachedProviderProfiles: ProviderProfile[] | null = null;
 
 type PresetInfo = {
   file: string;
   name: string;
   description: string;
+  provider_profile?: string;
+};
+
+type ProviderProfileEndpoint = {
+  host?: unknown;
+  port?: unknown;
+  protocol?: unknown;
+  tls?: unknown;
+  access?: unknown;
+  enforcement?: unknown;
+  rules?: unknown;
+  allowed_ips?: unknown;
+  ports?: unknown;
+  deny_rules?: unknown;
+  allow_encoded_slash?: unknown;
+  websocket_credential_rewrite?: unknown;
+  request_body_credential_rewrite?: unknown;
+  persisted_queries?: unknown;
+  graphql_persisted_queries?: unknown;
+  graphql_max_body_bytes?: unknown;
+  path?: unknown;
+};
+
+type ProviderProfile = {
+  id: string;
+  display_name?: string;
+  description?: string;
+  endpoints?: ProviderProfileEndpoint[];
+  binaries?: Array<string | { path?: unknown }>;
 };
 
 // Re-use shared JSON types under policy-domain names.
@@ -51,20 +82,22 @@ function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
  * `preset:` header.
  */
 function listPresets(): PresetInfo[] {
-  if (!fs.existsSync(PRESETS_DIR)) return [];
-  return fs
-    .readdirSync(PRESETS_DIR)
-    .filter((f: string) => f.endsWith(".yaml"))
-    .map((f: string) => {
-      const content = fs.readFileSync(path.join(PRESETS_DIR, f), "utf-8");
-      const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
-      const descMatch = content.match(/^\s*description:\s*"?([^"]*)"?$/m);
-      return {
-        file: f,
-        name: nameMatch ? nameMatch[1].trim() : f.replace(".yaml", ""),
-        description: descMatch ? descMatch[1].trim() : "",
-      };
-    });
+  const builtinPresets = fs.existsSync(PRESETS_DIR)
+    ? fs
+        .readdirSync(PRESETS_DIR)
+        .filter((f: string) => f.endsWith(".yaml"))
+        .map((f: string) => {
+          const content = fs.readFileSync(path.join(PRESETS_DIR, f), "utf-8");
+          const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
+          const descMatch = content.match(/^\s*description:\s*"?([^"]*)"?$/m);
+          return {
+            file: f,
+            name: nameMatch ? nameMatch[1].trim() : f.replace(".yaml", ""),
+            description: descMatch ? descMatch[1].trim() : "",
+          };
+        })
+    : [];
+  return mergeProviderProfilePresets(builtinPresets, listOpenShellProviderPresets());
 }
 
 /**
@@ -72,6 +105,9 @@ function listPresets(): PresetInfo[] {
  * path traversal and returns `null` if the preset does not exist.
  */
 function loadPreset(name: string): string | null {
+  const providerPreset = loadOpenShellProviderPreset(name);
+  if (providerPreset) return providerPreset;
+
   const file = path.resolve(PRESETS_DIR, `${name}.yaml`);
   if (!file.startsWith(PRESETS_DIR + path.sep) && file !== PRESETS_DIR) {
     console.error(`  Invalid preset name: ${name}`);
@@ -82,6 +118,173 @@ function loadPreset(name: string): string | null {
     return null;
   }
   return fs.readFileSync(file, "utf-8");
+}
+
+function openshellBinary(): string {
+  return process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+}
+
+function parseProviderProfilesJson(raw: string): ProviderProfile[] {
+  if (!raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+
+  const candidates = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === "object" && Array.isArray((parsed as { profiles?: unknown }).profiles)
+      ? (parsed as { profiles: unknown[] }).profiles
+      : [];
+
+  return candidates
+    .filter((value): value is Record<string, unknown> => {
+      return typeof value === "object" && value !== null && typeof value.id === "string";
+    })
+    .map((profile) => ({
+      id: String(profile.id),
+      display_name: typeof profile.display_name === "string" ? profile.display_name : undefined,
+      description: typeof profile.description === "string" ? profile.description : undefined,
+      endpoints: Array.isArray(profile.endpoints)
+        ? (profile.endpoints as ProviderProfileEndpoint[])
+        : [],
+      binaries: Array.isArray(profile.binaries)
+        ? (profile.binaries as Array<string | { path?: unknown }>)
+        : [],
+    }));
+}
+
+function readProviderProfilesFromOpenShell(): ProviderProfile[] {
+  if (process.env.NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON) {
+    return parseProviderProfilesJson(process.env.NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON);
+  }
+  if (cachedProviderProfiles !== null) return cachedProviderProfiles;
+
+  const raw = runCapture([openshellBinary(), "provider", "list-profiles", "-o", "json"], {
+    ignoreError: true,
+    timeout: 5_000,
+  });
+  cachedProviderProfiles = parseProviderProfilesJson(raw);
+  return cachedProviderProfiles;
+}
+
+function providerProfileHasPolicy(profile: ProviderProfile): boolean {
+  return Array.isArray(profile.endpoints) && profile.endpoints.some((endpoint) => {
+    return typeof endpoint.host === "string" && Number(endpoint.port) > 0;
+  });
+}
+
+function providerProfileToPresetInfo(profile: ProviderProfile): PresetInfo | null {
+  if (!providerProfileHasPolicy(profile)) return null;
+  return {
+    file: `${PROVIDER_PROFILE_PRESET_PREFIX}${profile.id}`,
+    name: profile.id,
+    description: profile.description || profile.display_name || `${profile.id} provider profile`,
+    provider_profile: profile.id,
+  };
+}
+
+function listOpenShellProviderPresets(): PresetInfo[] {
+  return readProviderProfilesFromOpenShell()
+    .map(providerProfileToPresetInfo)
+    .filter((preset): preset is PresetInfo => preset !== null);
+}
+
+function mergeProviderProfilePresets(
+  builtinPresets: PresetInfo[],
+  providerPresets: PresetInfo[],
+): PresetInfo[] {
+  const byName = new Map<string, PresetInfo>();
+  for (const preset of builtinPresets) byName.set(preset.name, preset);
+  for (const preset of providerPresets) {
+    const existing = byName.get(preset.name);
+    byName.set(
+      preset.name,
+      existing ? { ...existing, provider_profile: preset.provider_profile } : preset,
+    );
+  }
+  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function providerBinaryPath(binary: string | { path?: unknown }): string | null {
+  if (typeof binary === "string") return binary;
+  if (binary && typeof binary.path === "string") return binary.path;
+  return null;
+}
+
+function cleanProviderEndpoint(endpoint: ProviderProfileEndpoint): PolicyObject | null {
+  if (typeof endpoint.host !== "string" || Number(endpoint.port) <= 0) return null;
+  const output: PolicyObject = {
+    host: endpoint.host,
+    port: Number(endpoint.port),
+  };
+  for (const key of [
+    "protocol",
+    "tls",
+    "access",
+    "enforcement",
+    "rules",
+    "allowed_ips",
+    "ports",
+    "deny_rules",
+    "allow_encoded_slash",
+    "websocket_credential_rewrite",
+    "request_body_credential_rewrite",
+    "persisted_queries",
+    "graphql_persisted_queries",
+    "graphql_max_body_bytes",
+    "path",
+  ] as const) {
+    const value = endpoint[key];
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== "" &&
+      !(Array.isArray(value) && value.length === 0)
+    ) {
+      output[key] = value as PolicyValue;
+    }
+  }
+  return output;
+}
+
+function providerProfileToPresetContent(profile: ProviderProfile): string | null {
+  const endpoints = (profile.endpoints || [])
+    .map(cleanProviderEndpoint)
+    .filter((endpoint): endpoint is PolicyObject => endpoint !== null);
+  if (endpoints.length === 0) return null;
+
+  const binaries = (profile.binaries || [])
+    .map(providerBinaryPath)
+    .filter((binary): binary is string => Boolean(binary))
+    .map((binary) => ({ path: binary }));
+
+  const policyName = profile.id.replace(/-/g, "_");
+  return YAML.stringify({
+    preset: {
+      name: profile.id,
+      description: profile.description || profile.display_name || `${profile.id} provider profile`,
+      provider_profile: profile.id,
+    },
+    network_policies: {
+      [policyName]: {
+        name: policyName,
+        endpoints,
+        ...(binaries.length > 0 ? { binaries } : {}),
+      },
+    },
+  });
+}
+
+function loadOpenShellProviderPreset(name: string): string | null {
+  const profile = readProviderProfilesFromOpenShell().find((candidate) => candidate.id === name);
+  return profile ? providerProfileToPresetContent(profile) : null;
+}
+
+function clearProviderProfileCache(): void {
+  cachedProviderProfiles = null;
 }
 
 /**
@@ -1067,6 +1270,11 @@ export {
   PERMISSIVE_POLICY_PATH,
   listPresets,
   loadPreset,
+  listOpenShellProviderPresets,
+  loadOpenShellProviderPreset,
+  providerProfileToPresetContent,
+  parseProviderProfilesJson,
+  clearProviderProfileCache,
   getPresetEndpoints,
   getMessagingPresetWarning,
   setupPolicyPresetSupported,

@@ -16,6 +16,22 @@ const MAX_SUMMARY_PATHS = 4;
 const CACHE_MAX_SIZE = 100;
 /** Time-to-live in milliseconds for a session cache entry (1 hour). */
 const CACHE_TTL_MS = 60 * 60 * 1000;
+const ACCESS_WORKFLOW_LINES = [
+  "Access workflow:",
+  "- Before requesting network-only access, call openshell_provider_access with action=list first to view currently attached provider credentials.",
+  "- Prefer an attached provider credential over a network-only resource rule when the task needs authentication, API tokens, OAuth, code hosting, messaging, email, calendars, issue trackers, or other account-backed access.",
+  "- If a needed provider is not attached, call openshell_provider_access with action=request and wait for operator approval before falling back to openshell_network_access.",
+  "- Use openshell_provider_access with action=check and the returned request_id to view approval status, or action=check with provider_name to verify an attached provider.",
+  "- Attached provider credentials may appear as openshell:resolve:env:* placeholders. Use the listed credential_env normally through the sandbox HTTP_PROXY/HTTPS_PROXY; OpenShell resolves the placeholder at the proxy. Do not decode, print, or treat it as a raw token.",
+  "- When a provider is attached, follow openshell_provider_access usage guidance exactly. If a preferred CLI is missing, use an available fallback tool. For bearer-token providers, pass the listed credential_env in the required auth header through HTTP_PROXY/HTTPS_PROXY.",
+  "- Use openshell_network_access only for unauthenticated network reachability or package/document fetches that do not need account credentials.",
+  "Access examples:",
+  '- View provider access: openshell_provider_access {"action":"list"}',
+  '- Request provider access: openshell_provider_access {"action":"request","provider_name":"<provider_name>","provider_type":"<provider_type>","user_intent":"Describe the account-backed task","reason":"Use the host-managed provider credential without exposing a raw token","wait_timeout_ms":0}',
+  '- Check request status: openshell_provider_access {"action":"check","request_id":"<request_id>","wait_timeout_ms":1000}',
+  '- Check attached provider: openshell_provider_access {"action":"check","provider_name":"<provider_name>"}',
+  '- Request network-only access only after provider access is not applicable: openshell_network_access {"action":"request","resource":"<resource_preset>","access":"read","duration":"session","user_intent":"Fetch public unauthenticated content","reason":"No account credential is needed"}',
+];
 
 /** Uniquely identifies a sandbox+policy state at a point in time. */
 interface RuntimeFingerprint {
@@ -348,6 +364,7 @@ function buildRuntimeContextText(summary: RuntimeSummary): string {
     ...summary.networkLines.map((line) => `- ${line}`),
     "Filesystem policy:",
     ...summary.filesystemLines.map((line) => `- ${line}`),
+    ...ACCESS_WORKFLOW_LINES,
     "Behavior:",
     "- Do not claim unrestricted host or internet access.",
     "- if access is blocked, say it is blocked and ask the operator to adjust policy or approve it in OpenShell",
@@ -492,6 +509,7 @@ export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: Nem
           "<nemoclaw-runtime>",
           `You are running inside OpenShell sandbox "${activeSandbox}" via NemoClaw.`,
           "Treat network access as deny-by-default and report proxy 403 responses as policy blocks.",
+          ...ACCESS_WORKFLOW_LINES,
           "Do not claim unrestricted host or internet access.",
           "</nemoclaw-runtime>",
         ].join("\n"),

@@ -25,6 +25,8 @@ RUN npm ci && npm run build
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+COPY scripts/install-provider-tools.sh /usr/local/lib/nemoclaw/install-provider-tools.sh
+
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
 # procps/e2fsprogs additions, leaving ps/chattr absent or auto-marked. The
@@ -52,6 +54,12 @@ RUN set -eu; \
     rm -rf /var/lib/apt/lists/*; \
     ps --version; \
     command -v chattr >/dev/null
+
+# Provider tools are installed in the base image, but this derived-image replay
+# keeps local and CI builds usable while GHCR sandbox-base catches up. OpenShell
+# provider approval still controls network and credential use at runtime.
+RUN chmod 755 /usr/local/lib/nemoclaw/install-provider-tools.sh \
+    && /usr/local/lib/nemoclaw/install-provider-tools.sh
 
 
 # Copy built plugin and blueprint into the sandbox
@@ -245,6 +253,8 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /usr/local/lib/nemoclaw/generate-openclaw-config.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
+    && mkdir -p /usr/local/share/nemoclaw/openclaw-plugins/nemoclaw \
+    && cp -a /opt/nemoclaw/. /usr/local/share/nemoclaw/openclaw-plugins/nemoclaw/ \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
     && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
@@ -593,7 +603,7 @@ RUN chown root:root /sandbox/.nemoclaw \
     && chmod -R 755 /sandbox/.nemoclaw/blueprints \
     && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
-    && touch /sandbox/.nemoclaw/config.json \
+    && printf '{}\n' > /sandbox/.nemoclaw/config.json \
     && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
 
 # OpenShell 0.0.37's macOS VM backend currently remaps rootfs ownership to the

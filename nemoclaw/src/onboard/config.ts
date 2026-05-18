@@ -157,7 +157,16 @@ export function loadOnboardConfig(): NemoClawOnboardConfig | null {
   if (!existsSync(path)) {
     return null;
   }
-  const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+  const raw = readFileSync(path, "utf-8").trim();
+  if (!raw) {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
   const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
   return isOnboardConfig(parsedObject) ? parsedObject : null;
 }

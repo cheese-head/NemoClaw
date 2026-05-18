@@ -321,6 +321,7 @@ describe("Issue #2273: atomic rebuild", () => {
         const f = createFixture({
           credentialEnv: "NVIDIA_API_KEY",
           // no savedCredential
+          providerRegistered: false,
         });
 
         const result = runRebuild(f);
@@ -333,6 +334,27 @@ describe("Issue #2273: atomic rebuild", () => {
         expect(output).toContain("untouched");
         // Sandbox should still be in the registry (not destroyed)
         expect(registryHasSandbox(f)).toBe(true);
+      },
+    );
+
+    it(
+      "reuses a registered OpenShell provider when the raw credential is not exported",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          provider: "compatible-endpoint",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          providerRegistered: true,
+          // no savedCredential — the gateway already owns the credential
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("preflight failed");
+        expect(output).not.toContain("Missing credential: COMPATIBLE_API_KEY");
+        expect(output).toContain("OpenShell provider 'compatible-endpoint' is registered");
+        expect(output).toContain("Backing up sandbox state");
       },
     );
 
@@ -479,6 +501,7 @@ describe("Issue #2273: atomic rebuild", () => {
           provider: "openai-api",
           credentialEnv: "OPENAI_API_KEY",
           // no savedCredential
+          providerRegistered: false,
         });
 
         const result = runRebuild(f);

@@ -330,6 +330,8 @@ const openshellPinFlow: typeof import("./onboard/openshell-pin") =
   require("./onboard/openshell-pin");
 const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-failure") =
   require("./onboard/sandbox-create-failure");
+const providerProfileOnboard: typeof import("./onboard/provider-profiles") =
+  require("./onboard/provider-profiles");
 
 import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./adapters/http/probe";
@@ -1227,6 +1229,14 @@ function shouldAllowOpenshellAboveBlueprintMax(
   return shouldUseOpenshellDevChannel(platform, env) && isOpenshellDevVersion(versionOutput);
 }
 
+function shouldAllowOpenshellBelowBlueprintMin(
+  versionOutput: string | null | undefined,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return shouldUseOpenshellDevChannel(platform, env) && isOpenshellDevVersion(versionOutput);
+}
+
 type SandboxGpuMode = "auto" | "1" | "0";
 type SandboxGpuFlag = "enable" | "disable" | null;
 
@@ -1962,6 +1972,18 @@ function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
 }
 function providerExistsInGateway(name: string) {
   return onboardProviders.providerExistsInGateway(name, runOpenshell);
+}
+
+function ensureProviderProfilesAvailable(): void {
+  const result = providerProfileOnboard.ensureNemoClawProviderProfiles(runOpenshell, {
+    log: note,
+  });
+  if (result.status === "unsupported") {
+    note(`  ${result.message}`);
+  } else if (result.status === "already-present" && result.skipped.length > 0) {
+    note(`  NemoClaw provider profiles already registered: ${result.skipped.join(", ")}`);
+  }
+  policies.clearProviderProfileCache();
 }
 
 function getMessagingChannelForEnvKey(envKey: string): string | null {
@@ -2772,6 +2794,7 @@ function getOpenShellInstallDeps(): OpenShellInstallDeps {
     shouldUseOpenshellDevChannel,
     isOpenshellDevVersion,
     versionGte,
+    shouldAllowOpenshellBelowBlueprintMin,
     shouldAllowOpenshellAboveBlueprintMax,
     cliDisplayName,
     log: console.log,
@@ -10352,6 +10375,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSession.markStepComplete("gateway");
     }
 
+    ensureProviderProfilesAvailable();
+
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
     // A pre-fix session may carry sandboxName even though sandbox creation
     // never completed; users supplying `--name` / NEMOCLAW_SANDBOX_NAME on
@@ -10938,6 +10963,7 @@ module.exports = {
   getResumeSandboxGpuOverrides,
   getSandboxReadyTimeoutSecs,
   resolveSandboxGpuConfig,
+  shouldAllowOpenshellBelowBlueprintMin,
   shouldAllowOpenshellAboveBlueprintMax,
   pullAndResolveBaseImageDigest,
   SANDBOX_BASE_IMAGE,

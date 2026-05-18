@@ -355,6 +355,7 @@ describe("generate-openclaw-config.py: config generation", () => {
       enabled: true,
     });
     expect(config.plugins.load.paths).toEqual([
+      "/usr/local/share/nemoclaw/openclaw-plugins/nemoclaw",
       "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat",
     ]);
   });
@@ -400,7 +401,9 @@ describe("generate-openclaw-config.py: config generation", () => {
       const providerConfig = Object.values(config.models.providers)[0] as any;
       expect(providerConfig.models[0].compat).toEqual({ supportsStore: false });
       expect(config.plugins.entries["nemoclaw-kimi-inference-compat"]).toBeUndefined();
-      expect(config.plugins.load).toBeUndefined();
+      expect(config.plugins.load.paths).toEqual([
+        "/usr/local/share/nemoclaw/openclaw-plugins/nemoclaw",
+      ]);
     }
   });
 
@@ -643,6 +646,14 @@ describe("generate-openclaw-config.py: config generation", () => {
     const config = runConfigScript();
     expect(config.plugins.entries.acpx.enabled).toBe(false);
     expect(config.plugins.entries.acpx.config).toBeUndefined();
+  });
+
+  it("loads the NemoClaw OpenClaw plugin by default", () => {
+    const config = runConfigScript();
+    expect(config.plugins.entries.nemoclaw).toEqual({ enabled: true });
+    expect(config.plugins.load.paths).toEqual([
+      "/usr/local/share/nemoclaw/openclaw-plugins/nemoclaw",
+    ]);
   });
 
   it("disables unused bundled provider plugins with staged runtime deps", () => {

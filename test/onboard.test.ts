@@ -164,6 +164,11 @@ type OnboardTestInternals = {
     platform?: NodeJS.Platform,
     env?: NodeJS.ProcessEnv,
   ) => boolean;
+  shouldAllowOpenshellBelowBlueprintMin: (
+    versionOutput?: string | null,
+    platform?: NodeJS.Platform,
+    env?: NodeJS.ProcessEnv,
+  ) => boolean;
   versionGte: (left?: string | null, right?: string | null) => boolean;
   getRequestedModelHint: ShimFn<string | null>;
   getRequestedProviderHint: ShimFn<string | null>;
@@ -254,6 +259,7 @@ function isOnboardTestInternals(
     typeof value.resolveSandboxGpuConfig === "function" &&
     typeof value.getResumeSandboxGpuOverrides === "function" &&
     typeof value.getSandboxReadyTimeoutSecs === "function" &&
+    typeof value.shouldAllowOpenshellBelowBlueprintMin === "function" &&
     typeof value.shouldAllowOpenshellAboveBlueprintMax === "function" &&
     typeof value.hasChatCompletionsToolCall === "function" &&
     typeof value.hasChatCompletionsToolCallLeak === "function" &&
@@ -314,6 +320,7 @@ const {
   resolveSandboxGpuConfig,
   getResumeSandboxGpuOverrides,
   getSandboxReadyTimeoutSecs,
+  shouldAllowOpenshellBelowBlueprintMin,
   shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
   getRequestedModelHint,
@@ -698,6 +705,21 @@ network_policies:
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       }),
     ).toBe(true);
+    expect(
+      shouldAllowOpenshellBelowBlueprintMin("openshell 0.0.35-dev.206+g0c8c7230", "linux", {
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      }),
+    ).toBe(true);
+    expect(
+      shouldAllowOpenshellBelowBlueprintMin("openshell 0.0.35-dev.206+g0c8c7230", "linux", {
+        NEMOCLAW_OPENSHELL_CHANNEL: "auto",
+      }),
+    ).toBe(false);
+    expect(
+      shouldAllowOpenshellBelowBlueprintMin("openshell 0.0.35", "linux", {
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      }),
+    ).toBe(false);
     expect(
       shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40.dev1+gabcdef", "linux", {
         NEMOCLAW_OPENSHELL_CHANNEL: "auto",

@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: pypi
+display_name: PyPI
+description: Python Package Index (PyPI) access
+category: data
+endpoints:
+  - host: pypi.org
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/**" }
+      - allow: { method: HEAD, path: "/**" }
+  - host: files.pythonhosted.org
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/**" }
+      - allow: { method: HEAD, path: "/**" }
+binaries:
+  - /usr/bin/python3*
+  - /usr/bin/pip*
+  - /usr/local/bin/python3*
+  - /usr/local/bin/pip*
+  - /sandbox/.venv/bin/python*
+  - /sandbox/.venv/bin/pip*
+  - /sandbox/.uv/python/**/python*
+  - /sandbox/.local/bin/pip*

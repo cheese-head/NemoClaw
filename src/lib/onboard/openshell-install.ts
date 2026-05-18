@@ -100,6 +100,7 @@ export type OpenShellInstallDeps = {
   shouldUseOpenshellDevChannel: () => boolean;
   isOpenshellDevVersion: (versionOutput: string | null) => boolean;
   versionGte: (a: string, b: string) => boolean;
+  shouldAllowOpenshellBelowBlueprintMin: (versionOutput: string | null) => boolean;
   shouldAllowOpenshellAboveBlueprintMax: (versionOutput: string | null) => boolean;
   cliDisplayName: () => string;
   log: (message: string) => void;
@@ -168,8 +169,9 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
       const needsDockerDriverBinaries =
         deps.isLinuxDockerDriverGatewayEnabled(platform, arch) &&
         !areRequiredDockerDriverBinariesPresent(deps, platform, {}, arch);
+      const allowBelowMin = deps.shouldAllowOpenshellBelowBlueprintMin(currentVersionOutput);
       const needsUpgrade =
-        !deps.versionGte(currentVersion, minOpenshellVersion) ||
+        (!deps.versionGte(currentVersion, minOpenshellVersion) && !allowBelowMin) ||
         needsDevChannel ||
         needsDockerDriverBinaries;
       if (needsUpgrade) {
@@ -200,7 +202,8 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
   if (
     installedOpenshellVersion &&
     minOpenshellVersion &&
-    !deps.versionGte(installedOpenshellVersion, minOpenshellVersion)
+    !deps.versionGte(installedOpenshellVersion, minOpenshellVersion) &&
+    !deps.shouldAllowOpenshellBelowBlueprintMin(openshellVersionOutput)
   ) {
     deps.error("");
     deps.error(
