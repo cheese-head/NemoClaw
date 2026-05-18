@@ -47,11 +47,12 @@ def call_tool(name, payload):
 
 command = sys.argv[1] if len(sys.argv) > 1 else ""
 if command == "list":
-    result = call_tool("list_resource_access_presets", {})
+    result = call_tool("openshell_network_access", {"action": "list_presets"})
 elif command == "request":
     result = call_tool(
-        "request_resource_access",
+        "openshell_network_access",
         {
+            "action": "request",
             "user_intent": "Verify Hermes NemoClaw access request integration",
             "resource": "github",
             "access": "read",
@@ -62,8 +63,9 @@ elif command == "request":
     )
 elif command == "check" and len(sys.argv) == 3:
     result = call_tool(
-        "check_resource_access",
+        "openshell_network_access",
         {
+            "action": "check",
             "request_id": sys.argv[2],
             "wait_timeout_ms": 30000,
         },

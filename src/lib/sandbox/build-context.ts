@@ -102,6 +102,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "codex-acp-wrapper.sh"),
     path.join(stagedScriptsDir, "codex-acp-wrapper.sh"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "install-provider-tools.sh"),
+    path.join(stagedScriptsDir, "install-provider-tools.sh"),
+  );
   // Shared sandbox initialisation library sourced by the entrypoint (#2277)
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
   fs.copyFileSync(

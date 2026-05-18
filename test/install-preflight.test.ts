@@ -2217,6 +2217,29 @@ exit 1
     expect(r.stdout.trim()).toBe("yes");
   });
 
+  it("is_source_checkout: accepts a git worktree checkout with .git file metadata", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-checkout-worktree-"));
+    fs.writeFileSync(path.join(tmp, ".git"), "gitdir: /tmp/nemoclaw-worktree/.git/worktrees/fixture\n");
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    const r = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER}" 2>/dev/null; is_source_checkout "${tmp}" && echo yes || echo no`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: { HOME: tmp, PATH: TEST_SYSTEM_PATH },
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("yes");
+  });
+
   it("is_source_checkout: rejects bootstrap payload clones even when git metadata exists", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-checkout-bootstrap-"));
     fs.mkdirSync(path.join(tmp, ".git"));

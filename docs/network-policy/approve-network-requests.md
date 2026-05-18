@@ -80,6 +80,7 @@ The walkthrough requires tmux and the `NVIDIA_API_KEY` environment variable.
 
 ## Related Topics
 
+- [Provider and Network Access Requests](provider-access-requests.md) explains provider-backed credentials, network-only access, and the sandbox-side tools.
 - [Customize the Sandbox Network Policy](customize-network-policy.md) to add endpoints permanently.
 - [Network Policies](../reference/network-policies.md) for the full baseline policy reference.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) for general sandbox monitoring.

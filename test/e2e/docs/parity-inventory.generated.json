@@ -5656,6 +5656,13 @@
       ]
     },
     {
+      "script": "test/e2e/test-hermes-policy-local-plugin.sh",
+      "assertions": [],
+      "zero_assertion_review": {
+        "reason": "TODO: review legacy entrypoint for assertions not expressed as PASS/FAIL output"
+      }
+    },
+    {
       "script": "test/e2e/test-hermes-slack-e2e.sh",
       "assertions": [
         {
@@ -8809,6 +8816,13 @@
           "mapping_status": "retired"
         }
       ]
+    },
+    {
+      "script": "test/e2e/test-nemoclaw-policy-local-plugin.sh",
+      "assertions": [],
+      "zero_assertion_review": {
+        "reason": "TODO: review legacy entrypoint for assertions not expressed as PASS/FAIL output"
+      }
     },
     {
       "script": "test/e2e/test-network-policy.sh",
@@ -15701,8 +15715,8 @@
     }
   ],
   "totals": {
-    "scripts": 48,
+    "scripts": 50,
     "assertions": 1932,
-    "zero_assertion_scripts": 1
+    "zero_assertion_scripts": 3
   }
 }

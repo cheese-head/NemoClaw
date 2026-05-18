@@ -25,6 +25,8 @@ RUN npm ci && npm run build
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+COPY scripts/install-provider-tools.sh /usr/local/lib/nemoclaw/install-provider-tools.sh
+
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
 # procps/e2fsprogs additions, leaving ps/chattr absent or auto-marked. The
@@ -52,6 +54,12 @@ RUN set -eu; \
     rm -rf /var/lib/apt/lists/*; \
     ps --version; \
     command -v chattr >/dev/null
+
+# Provider tools are installed in the base image, but this derived-image replay
+# keeps local and CI builds usable while GHCR sandbox-base catches up. OpenShell
+# provider approval still controls network and credential use at runtime.
+RUN chmod 755 /usr/local/lib/nemoclaw/install-provider-tools.sh \
+    && /usr/local/lib/nemoclaw/install-provider-tools.sh
 
 
 # Copy built plugin and blueprint into the sandbox

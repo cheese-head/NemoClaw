@@ -28,6 +28,22 @@ export interface AccessPresetsResponse {
   presets: AccessPresetInfo[];
 }
 
+export interface ProviderAccessInfo {
+  provider_name: string;
+  provider_type?: string;
+  status: "attached";
+  credential_env?: string;
+  credential_state: "attached_placeholder" | "attached_unknown";
+  usable_via_proxy: boolean;
+  raw_secret_available: boolean;
+  /** @deprecated Use credential_state and usable_via_proxy. */
+  credential_available: boolean;
+}
+
+export interface ProviderAccessResponse {
+  providers: ProviderAccessInfo[];
+}
+
 export interface CreateAccessRequestBody {
   version: "nemoclaw.access.v1";
   task_id?: string;
@@ -39,6 +55,15 @@ export interface CreateAccessRequestBody {
     duration: "session" | "persistent";
     reason: string;
   };
+}
+
+export interface CreateProviderAccessRequestBody {
+  version: "nemoclaw.provider_access.v1";
+  task_id?: string;
+  user_intent: string;
+  provider_name: string;
+  provider_type?: string;
+  reason: string;
 }
 
 export interface AccessClientOptions {
@@ -101,10 +126,40 @@ type ProviderProfile = {
   binaries?: Array<string | { path?: unknown }>;
 };
 
+type AttachedProvider = {
+  provider_name: string;
+  provider_type?: string;
+  credential_env?: string;
+};
+
+type AttachedProviderJson = Record<string, unknown> & {
+  provider_name: string;
+};
+
 const NODE_BINARIES = [{ path: "/usr/local/bin/node" }, { path: "/usr/bin/node" }];
 const READ_METHODS = ["GET", "HEAD"];
 const READ_WRITE_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 const PROVIDER_PROFILE_CACHE_MS = 30_000;
+const PROVIDER_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:";
+
+const PROVIDER_ENV_HINTS: Record<string, { provider_name: string; provider_type: string }> = {
+  ANTHROPIC_API_KEY: { provider_name: "anthropic", provider_type: "anthropic" },
+  BRAVE_API_KEY: { provider_name: "brave", provider_type: "brave" },
+  CLAUDE_API_KEY: { provider_name: "claude", provider_type: "claude" },
+  COPILOT_GITHUB_TOKEN: { provider_name: "copilot", provider_type: "copilot" },
+  GITHUB_TOKEN: { provider_name: "github", provider_type: "github" },
+  GITLAB_TOKEN: { provider_name: "gitlab", provider_type: "gitlab" },
+  GLAB_TOKEN: { provider_name: "gitlab", provider_type: "gitlab" },
+  GH_TOKEN: { provider_name: "github", provider_type: "github" },
+  HF_TOKEN: { provider_name: "huggingface", provider_type: "huggingface" },
+  HUGGINGFACE_TOKEN: { provider_name: "huggingface", provider_type: "huggingface" },
+  NVIDIA_API_KEY: { provider_name: "nvidia", provider_type: "nvidia" },
+  OPENAI_API_KEY: { provider_name: "openai", provider_type: "openai" },
+  OPENCODE_API_KEY: { provider_name: "opencode", provider_type: "opencode" },
+  SLACK_APP_TOKEN: { provider_name: "slack", provider_type: "slack" },
+  SLACK_BOT_TOKEN: { provider_name: "slack", provider_type: "slack" },
+  TELEGRAM_BOT_TOKEN: { provider_name: "telegram", provider_type: "telegram" },
+};
 
 let cachedProviderPresets: { loadedAt: number; presets: AccessPreset[] } | null = null;
 
@@ -260,6 +315,25 @@ const PRESETS: AccessPreset[] = [
 
 function openshellBinary(): string {
   return process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+}
+
+function inferProviderNameFromEnv(envName: string): string {
+  const hinted = PROVIDER_ENV_HINTS[envName];
+  if (hinted) return hinted.provider_name;
+  return envName
+    .toLowerCase()
+    .replace(/_(api_)?token$/u, "")
+    .replace(/_api_key$/u, "")
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+}
+
+function inferProviderTypeFromEnv(envName: string): string | undefined {
+  return PROVIDER_ENV_HINTS[envName]?.provider_type;
+}
+
+function isProviderCredentialPlaceholder(value: string | undefined): boolean {
+  return typeof value === "string" && value.startsWith(PROVIDER_ENV_PLACEHOLDER_PREFIX);
 }
 
 function parseProviderProfilesJson(raw: string): ProviderProfile[] {
@@ -477,8 +551,14 @@ function parseJsonObject(raw: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-function mapChunkStatus(status: unknown, policyReloaded: unknown): AccessStatus {
-  if (status === "approved") return policyReloaded === true ? "applied" : "pending_approval";
+function mapChunkStatus(
+  status: unknown,
+  policyReloaded: unknown,
+  requestType: unknown,
+): AccessStatus {
+  if (status === "approved") {
+    return policyReloaded === true || requestType === "provider" ? "applied" : "pending_approval";
+  }
   if (status === "rejected") return "denied";
   if (status === "pending") return "pending_approval";
   return "failed";
@@ -638,8 +718,24 @@ function requestJsonViaHttpProxy<T>(
 function proposalBody(body: CreateAccessRequestBody): Record<string, unknown> {
   const rule = ruleForRequest(body);
   return {
+    human_summary: `Request ${body.llm_proposal.access === "read_write" ? "read/write" : "read"} access to ${body.llm_proposal.preset}`,
     intent_summary: [body.user_intent, body.llm_proposal.reason].filter(Boolean).join(" "),
     operations: [{ addRule: { ruleName: rule.name, rule } }],
+  };
+}
+
+function providerProposalBody(body: CreateProviderAccessRequestBody): Record<string, unknown> {
+  return {
+    human_summary: `Attach provider ${body.provider_name}`,
+    intent_summary: [body.user_intent, body.reason].filter(Boolean).join(" "),
+    operations: [
+      {
+        requestProvider: {
+          providerName: body.provider_name,
+          ...(body.provider_type ? { providerType: body.provider_type } : {}),
+        },
+      },
+    ],
   };
 }
 
@@ -666,7 +762,7 @@ function parseStateResponse(raw: string): AccessRequestResponse {
   const requestId = typeof parsed.chunk_id === "string" ? parsed.chunk_id : "";
   return {
     request_id: requestId,
-    status: mapChunkStatus(parsed.status, parsed.policy_reloaded),
+    status: mapChunkStatus(parsed.status, parsed.policy_reloaded, parsed.request_type),
     message:
       typeof parsed.rejection_reason === "string" && parsed.rejection_reason
         ? parsed.rejection_reason
@@ -677,11 +773,54 @@ function parseStateResponse(raw: string): AccessRequestResponse {
   };
 }
 
+function parseAttachedProvidersResponse(raw: string): AttachedProvider[] {
+  const parsed = parseJsonObject(raw);
+  const providers = Array.isArray(parsed.providers) ? parsed.providers : [];
+  return providers
+    .filter((provider): provider is AttachedProviderJson => {
+      return (
+        typeof provider === "object" &&
+        provider !== null &&
+        typeof provider.provider_name === "string" &&
+        provider.provider_name.trim().length > 0
+      );
+    })
+    .map((provider) => ({
+      provider_name: provider.provider_name.trim(),
+      ...(typeof provider.provider_type === "string" && provider.provider_type.trim()
+        ? { provider_type: provider.provider_type.trim() }
+        : {}),
+      ...(Array.isArray(provider.credential_keys) &&
+      provider.credential_keys.find((key) => typeof key === "string" && key.trim().length > 0)
+        ? {
+            credential_env: (
+              provider.credential_keys.find(
+                (key) => typeof key === "string" && key.trim().length > 0,
+              ) as string
+            ).trim(),
+          }
+        : {}),
+    }));
+}
+
 export function createAccessRequest(
   body: CreateAccessRequestBody,
   options: AccessClientOptions = {},
 ): Promise<AccessRequestResponse> {
   return requestJson("POST", "/v1/proposals", proposalBody(body), options, parseCreateResponse);
+}
+
+export function createProviderAccessRequest(
+  body: CreateProviderAccessRequestBody,
+  options: AccessClientOptions = {},
+): Promise<AccessRequestResponse> {
+  return requestJson(
+    "POST",
+    "/v1/proposals",
+    providerProposalBody(body),
+    options,
+    parseCreateResponse,
+  );
 }
 
 export function getAccessRequest(
@@ -722,4 +861,118 @@ export function listAccessPresets(
       ...(provider_profile ? { provider_profile } : {}),
     })),
   });
+}
+
+function listProviderAccessFromEnv(): ProviderAccessInfo[] {
+  const byName = new Map<string, ProviderAccessInfo>();
+  for (const [envName, value] of Object.entries(process.env)) {
+    if (!isProviderCredentialPlaceholder(value)) continue;
+    const providerName = inferProviderNameFromEnv(envName);
+    if (!providerName) continue;
+    const existing = byName.get(providerName);
+    const next: ProviderAccessInfo = {
+      provider_name: providerName,
+      ...(inferProviderTypeFromEnv(envName)
+        ? { provider_type: inferProviderTypeFromEnv(envName) }
+        : {}),
+      status: "attached",
+      credential_env: envName,
+      credential_state: "attached_placeholder",
+      usable_via_proxy: true,
+      raw_secret_available: false,
+      credential_available: true,
+    };
+    if (!existing || (existing.credential_env ?? "") > envName) {
+      byName.set(providerName, next);
+    }
+  }
+  return [...byName.values()].sort((left, right) =>
+    left.provider_name.localeCompare(right.provider_name),
+  );
+}
+
+function mergeAttachedProviders(
+  attachedProviders: AttachedProvider[],
+  envProviders: ProviderAccessInfo[],
+): ProviderAccessInfo[] {
+  const byName = new Map<string, ProviderAccessInfo>();
+  for (const attached of attachedProviders) {
+    const providerName = attached.provider_name.trim();
+    if (!providerName) continue;
+    byName.set(providerName.toLowerCase(), {
+      provider_name: providerName,
+      ...(attached.provider_type ? { provider_type: attached.provider_type } : {}),
+      status: "attached",
+      ...(attached.credential_env ? { credential_env: attached.credential_env } : {}),
+      credential_state: attached.credential_env ? "attached_placeholder" : "attached_unknown",
+      usable_via_proxy: Boolean(attached.credential_env),
+      raw_secret_available: false,
+      credential_available: Boolean(attached.credential_env),
+    });
+  }
+  for (const envProvider of envProviders) {
+    const key = envProvider.provider_name.trim().toLowerCase();
+    const existing = byName.get(key);
+    byName.set(key, {
+      ...envProvider,
+      ...(existing?.provider_name ? { provider_name: existing.provider_name } : {}),
+      ...(existing?.provider_type || envProvider.provider_type
+        ? { provider_type: existing?.provider_type ?? envProvider.provider_type }
+        : {}),
+      ...(existing?.credential_env || envProvider.credential_env
+        ? { credential_env: existing?.credential_env ?? envProvider.credential_env }
+        : {}),
+      credential_state:
+        existing?.credential_state === "attached_placeholder" ||
+        envProvider.credential_state === "attached_placeholder"
+          ? "attached_placeholder"
+          : "attached_unknown",
+      usable_via_proxy: Boolean(existing?.usable_via_proxy || envProvider.usable_via_proxy),
+      raw_secret_available: false,
+      credential_available: Boolean(
+        existing?.credential_available || envProvider.credential_available,
+      ),
+    });
+  }
+  return [...byName.values()].sort((left, right) =>
+    left.provider_name.localeCompare(right.provider_name),
+  );
+}
+
+export async function listProviderAccess(
+  options: AccessClientOptions = {},
+): Promise<ProviderAccessResponse> {
+  const envProviders = listProviderAccessFromEnv();
+  try {
+    const attachedProviders = await requestJson(
+      "GET",
+      "/v1/providers",
+      undefined,
+      options,
+      parseAttachedProvidersResponse,
+    );
+    return {
+      providers: mergeAttachedProviders(attachedProviders, envProviders),
+    };
+  } catch {
+    // Older OpenShell sandboxes do not expose /v1/providers. Preserve the
+    // previous behavior there, using injected credential placeholders only.
+  }
+  return Promise.resolve({
+    providers: envProviders,
+  });
+}
+
+export async function getProviderAccess(
+  providerName: string,
+  options: AccessClientOptions = {},
+): Promise<ProviderAccessInfo | null> {
+  const normalized = providerName.trim().toLowerCase();
+  if (!normalized) return null;
+  const response = await listProviderAccess(options);
+  return (
+    response.providers.find(
+      (provider) => provider.provider_name.trim().toLowerCase() === normalized,
+    ) ?? null
+  );
 }

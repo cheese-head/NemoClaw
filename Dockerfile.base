@@ -58,6 +58,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv=3.13.5-1 \
         curl=8.14.1-2+deb13u2 \
         git=1:2.47.3-0+deb13u1 \
+        gh=2.46.0-3 \
+        glab=1.53.0-1+b3 \
         gnupg=2.4.7-21+deb13u1 \
         ca-certificates=20250419 \
         iproute2=6.15.0-1 \
@@ -70,6 +72,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         vim-tiny=2:9.1.1230-2 \
         openssh-sftp-server=1:10.0p1-7+deb13u2 \
     && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/install-provider-tools.sh /usr/local/lib/nemoclaw/install-provider-tools.sh
+RUN chmod 755 /usr/local/lib/nemoclaw/install-provider-tools.sh \
+    && /usr/local/lib/nemoclaw/install-provider-tools.sh
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of

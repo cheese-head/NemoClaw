@@ -116,23 +116,32 @@ module._provider_preset_cache = {"loaded_at": 0, "presets": None}
 
 ctx = Ctx()
 module.register(ctx)
-request = json.loads(ctx.tools["request_resource_access"]["handler"]({
+request = json.loads(ctx.tools["openshell_network_access"]["handler"]({
+    "action": "request",
     "user_intent": "inspect a repo",
     "resource": "github.com",
     "access": "read",
     "reason": "need repository metadata",
     "wait_timeout_ms": 0,
 }))
-check = json.loads(ctx.tools["check_resource_access"]["handler"]({
+check = json.loads(ctx.tools["openshell_network_access"]["handler"]({
+    "action": "check",
     "request_id": "chunk-123",
     "wait_timeout_ms": 1000,
 }))
-presets = json.loads(ctx.tools["list_resource_access_presets"]["handler"]({}))
+presets = json.loads(ctx.tools["openshell_network_access"]["handler"]({
+    "action": "list_presets",
+}))
+invalid = json.loads(ctx.tools["openshell_network_access"]["handler"]({
+    "action": "request",
+    "resource": "github",
+}))
 print(json.dumps({
     "tool_names": sorted(ctx.tools.keys()),
     "request": request,
     "check": check,
     "presets": presets,
+    "invalid": invalid,
     "calls": calls,
 }))
 `);
@@ -142,14 +151,13 @@ print(json.dumps({
       request: Record<string, unknown>;
       check: Record<string, unknown>;
       presets: { presets: Array<Record<string, unknown>> };
+      invalid: Record<string, unknown>;
       calls: Array<{ method: string; path: string; payload?: Record<string, unknown> }>;
     };
 
     expect(result.tool_names).toEqual(
       expect.arrayContaining([
-        "list_resource_access_presets",
-        "request_resource_access",
-        "check_resource_access",
+        "openshell_network_access",
       ]),
     );
     expect(result.request).toMatchObject({
@@ -165,6 +173,10 @@ print(json.dumps({
         expect.objectContaining({ name: "github", provider_profile: "github" }),
       ]),
     );
+    expect(result.invalid).toEqual({
+      status: "failed",
+      message: "For action=request, provide required field(s): user_intent, reason.",
+    });
     expect(result.calls[0]).toMatchObject({ method: "POST", path: "/v1/proposals" });
     expect(result.calls[0].payload?.operations).toHaveLength(1);
     expect(result.calls[1]).toMatchObject({

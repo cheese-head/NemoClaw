@@ -392,7 +392,7 @@ def _tool_result(response):
         or (
             "OpenShell returned a terminal access status."
             if response.get("status") in TERMINAL_ACCESS_STATUSES
-            else "Access request is still pending; call check_resource_access with the request_id to continue polling."
+            else "Access request is still pending; call openshell_network_access with action=check and this request_id to continue polling."
         ),
     }
     if response.get("canonical_request"):
@@ -415,7 +415,15 @@ def _handle_list_access_presets(tool_input=None, context=None, **_kwargs):
     )
 
 
-def _handle_request_resource_access(tool_input=None, context=None, **_kwargs):
+def _missing_string_fields(params, fields):
+    return [
+        field
+        for field in fields
+        if not isinstance(params.get(field), str) or not params.get(field).strip()
+    ]
+
+
+def _handle_create_network_access_request(tool_input=None, context=None, **_kwargs):
     params = tool_input if isinstance(tool_input, dict) else {}
     response = _create_access_request(params)
     timeout = _clamp_wait_timeout(params.get("wait_timeout_ms"), DEFAULT_ACCESS_WAIT_MS)
@@ -424,13 +432,48 @@ def _handle_request_resource_access(tool_input=None, context=None, **_kwargs):
     return json.dumps(_tool_result(response))
 
 
-def _handle_check_resource_access(tool_input=None, context=None, **_kwargs):
+def _handle_check_network_access(tool_input=None, context=None, **_kwargs):
     params = tool_input if isinstance(tool_input, dict) else {}
     request_id = params.get("request_id")
     if not isinstance(request_id, str) or not request_id:
         return json.dumps({"request_id": "", "status": "failed", "message": "Missing request_id."})
     timeout = _clamp_wait_timeout(params.get("wait_timeout_ms"), 0)
     return json.dumps(_tool_result(_get_access_request(request_id, timeout)))
+
+
+def _handle_network_access(tool_input=None, context=None, **_kwargs):
+    params = tool_input if isinstance(tool_input, dict) else {}
+    action = params.get("action")
+    action = action.strip().lower() if isinstance(action, str) else ""
+    if action == "list_presets":
+        return _handle_list_access_presets(params, context, **_kwargs)
+    if action == "check":
+        request_id = params.get("request_id")
+        if not isinstance(request_id, str) or not request_id.strip():
+            return json.dumps(
+                {
+                    "request_id": "",
+                    "status": "failed",
+                    "message": "For action=check, provide request_id.",
+                }
+            )
+        return _handle_check_network_access(params, context, **_kwargs)
+    if action == "request":
+        missing = _missing_string_fields(params, ["resource", "user_intent", "reason"])
+        if missing:
+            return json.dumps(
+                {
+                    "status": "failed",
+                    "message": f"For action=request, provide required field(s): {', '.join(missing)}.",
+                }
+            )
+        return _handle_create_network_access_request(params, context, **_kwargs)
+    return json.dumps(
+        {
+            "status": "failed",
+            "message": "Unknown action. Use one of: list_presets, check, request.",
+        }
+    )
 
 
 def _load_nemoclaw_config():
@@ -626,45 +669,28 @@ def register(ctx):
     )
 
     ctx.register_tool(
-        name="list_resource_access_presets",
+        name="openshell_network_access",
         toolset="nemoclaw",
         schema={
             "type": "function",
             "function": {
-                "name": "list_resource_access_presets",
+                "name": "openshell_network_access",
                 "description": (
-                    "List resource-access preset ids currently accepted for "
-                    "OpenShell access proposals."
-                ),
-                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-            },
-        },
-        handler=_handle_list_access_presets,
-        description="List OpenShell resource-access presets",
-    )
-
-    ctx.register_tool(
-        name="request_resource_access",
-        toolset="nemoclaw",
-        schema={
-            "type": "function",
-            "function": {
-                "name": "request_resource_access",
-                "description": (
-                    "Request least-privilege external resource access through "
-                    "OpenShell. The resource field must be a preset id; call "
-                    "list_resource_access_presets first if unsure."
+                    "List, check, or request OpenShell network-only access for this sandbox. "
+                    "Use this for unauthenticated network/resource reachability."
                 ),
                 "parameters": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["user_intent", "resource", "reason"],
+                    "required": ["action"],
                     "properties": {
+                        "action": {"type": "string", "enum": ["list_presets", "check", "request"]},
                         "user_intent": {"type": "string"},
                         "resource": {"type": "string"},
                         "access": {"type": "string", "enum": ["read", "read_write"], "default": "read"},
                         "reason": {"type": "string"},
                         "duration": {"type": "string", "enum": ["session", "persistent"], "default": "session"},
+                        "request_id": {"type": "string"},
                         "task_id": {"type": "string"},
                         "wait_timeout_ms": {
                             "type": "number",
@@ -676,39 +702,8 @@ def register(ctx):
                 },
             },
         },
-        handler=_handle_request_resource_access,
-        description="Request OpenShell resource access",
-    )
-
-    ctx.register_tool(
-        name="check_resource_access",
-        toolset="nemoclaw",
-        schema={
-            "type": "function",
-            "function": {
-                "name": "check_resource_access",
-                "description": (
-                    "Check or continue waiting for an OpenShell access proposal. "
-                    "This reports status only and cannot approve or modify access."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["request_id"],
-                    "properties": {
-                        "request_id": {"type": "string"},
-                        "wait_timeout_ms": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": MAX_ACCESS_WAIT_MS,
-                            "default": 0,
-                        },
-                    },
-                },
-            },
-        },
-        handler=_handle_check_resource_access,
-        description="Check OpenShell resource-access request",
+        handler=_handle_network_access,
+        description="OpenShell network access",
     )
 
     # Startup banner on session start

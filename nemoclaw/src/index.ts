@@ -12,6 +12,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { renderBox } from "./banner.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
@@ -21,14 +22,18 @@ import {
 } from "./onboard/config.js";
 import {
   createAccessRequest,
+  createProviderAccessRequest,
   getAccessRequest,
+  getProviderAccess,
   listAccessPresets,
+  listProviderAccess,
   waitAccessRequest,
   type AccessCanonicalRequest,
   type AccessClientOptions,
   type AccessRequestResponse,
   type AccessStatus,
   type CreateAccessRequestBody,
+  type CreateProviderAccessRequestBody,
 } from "./access-client.js";
 import { registerRuntimeContext } from "./runtime-context.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
@@ -36,6 +41,153 @@ import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
 type PluginScalar = string | number | boolean | null | undefined;
 type PluginValue = PluginScalar | PluginRecord | PluginValue[];
 type PluginRecord = { [key: string]: PluginValue };
+
+type ProviderToolHint = {
+  tool: string;
+  paths: string[];
+  role: "preferred" | "fallback";
+};
+
+type ProviderCredentialHint = {
+  kind: string;
+  header?: string;
+  value?: string;
+  note: string;
+};
+
+const PROVIDER_TOOL_HINTS: Record<string, ProviderToolHint[]> = {
+  anthropic: [
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "preferred" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+  ],
+  brave: [
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "preferred" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+  ],
+  claude: [
+    { tool: "claude", paths: ["/usr/bin/claude", "/usr/local/bin/claude"], role: "preferred" },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+  ],
+  codex: [
+    { tool: "codex", paths: ["/usr/bin/codex", "/usr/local/bin/codex"], role: "preferred" },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+  ],
+  copilot: [
+    { tool: "copilot", paths: ["/usr/bin/copilot", "/usr/local/bin/copilot"], role: "preferred" },
+    { tool: "gh", paths: ["/usr/bin/gh", "/usr/local/bin/gh"], role: "fallback" },
+  ],
+  discord: [
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "preferred" },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+  ],
+  github: [
+    { tool: "gh", paths: ["/usr/bin/gh", "/usr/local/bin/gh"], role: "preferred" },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+    { tool: "git", paths: ["/usr/bin/git", "/usr/local/bin/git"], role: "fallback" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+  ],
+  gitlab: [
+    { tool: "glab", paths: ["/usr/bin/glab", "/usr/local/bin/glab"], role: "preferred" },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+    { tool: "git", paths: ["/usr/bin/git", "/usr/local/bin/git"], role: "fallback" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+  ],
+  huggingface: [
+    { tool: "python3", paths: ["/usr/bin/python3", "/usr/local/bin/python3"], role: "preferred" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+  ],
+  jira: [
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "preferred" },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+  ],
+  nvidia: [
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "preferred" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+  ],
+  openai: [
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "preferred" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+  ],
+  opencode: [
+    {
+      tool: "opencode",
+      paths: ["/usr/bin/opencode", "/usr/local/bin/opencode"],
+      role: "preferred",
+    },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "fallback" },
+  ],
+  slack: [
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "preferred" },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+  ],
+  telegram: [
+    { tool: "node", paths: ["/usr/bin/node", "/usr/local/bin/node"], role: "preferred" },
+    { tool: "curl", paths: ["/usr/bin/curl", "/usr/local/bin/curl"], role: "fallback" },
+  ],
+};
+
+const PROVIDER_CREDENTIAL_HINTS: Record<string, ProviderCredentialHint> = {
+  anthropic: {
+    kind: "api_key_header",
+    header: "x-api-key",
+    value: "$ENV",
+    note: "Use the provider's required Anthropic version header alongside x-api-key. Route requests through the sandbox HTTP(S) proxy so OpenShell can resolve placeholders.",
+  },
+  brave: {
+    kind: "api_key_header",
+    header: "X-Subscription-Token",
+    value: "$ENV",
+    note: "Use the Brave Search subscription token header through the sandbox HTTP(S) proxy.",
+  },
+  github: {
+    kind: "bearer_header",
+    header: "Authorization",
+    value: "Bearer $ENV",
+    note: "Use the GitHub CLI when available, or pass this Authorization header through the sandbox HTTP(S) proxy for direct API calls.",
+  },
+  gitlab: {
+    kind: "bearer_header",
+    header: "Authorization",
+    value: "Bearer $ENV",
+    note: "Use glab when available, or pass this Authorization header through the sandbox HTTP(S) proxy for direct API calls.",
+  },
+  huggingface: {
+    kind: "bearer_header",
+    header: "Authorization",
+    value: "Bearer $ENV",
+    note: "Use this Authorization header through the sandbox HTTP(S) proxy for Hugging Face API calls.",
+  },
+  nvidia: {
+    kind: "bearer_header",
+    header: "Authorization",
+    value: "Bearer $ENV",
+    note: "Use this Authorization header through the sandbox HTTP(S) proxy for NVIDIA API calls.",
+  },
+  openai: {
+    kind: "bearer_header",
+    header: "Authorization",
+    value: "Bearer $ENV",
+    note: "Use this Authorization header through the sandbox HTTP(S) proxy for OpenAI-compatible API calls.",
+  },
+  opencode: {
+    kind: "provider_cli_or_documented_auth",
+    note: "Prefer the provider CLI. For direct API calls, use the provider-documented authentication format through the sandbox HTTP(S) proxy; do not assume a bearer header.",
+  },
+  slack: {
+    kind: "bearer_header",
+    header: "Authorization",
+    value: "Bearer $ENV",
+    note: "Use Slack SDKs or pass this Authorization header through the sandbox HTTP(S) proxy when the token type supports Web API calls.",
+  },
+  telegram: {
+    kind: "provider_url_token",
+    note: "Telegram bot tokens are normally part of the Bot API URL path. Use Telegram-specific tooling or API URL construction through the sandbox HTTP(S) proxy; do not send it as a generic bearer header.",
+  },
+};
 
 function isToolParams(value: PluginValue | object | null | undefined): value is ToolParams {
   return (
@@ -419,8 +571,122 @@ function toToolResult(response: AccessRequestResponse): PluginToolResult {
       response.message ??
       (TERMINAL_ACCESS_STATUSES.has(response.status)
         ? "OpenShell returned a terminal access status."
-        : "Access request is still pending; call check_resource_access with the request_id to continue polling."),
+        : "Access request is still pending; call the matching OpenShell access tool with action=check and this request_id to continue polling."),
     ...(response.canonical_request ? { canonical_request: response.canonical_request } : {}),
+  };
+}
+
+function providerAccessToolResult(
+  providerName: string,
+  attached: Awaited<ReturnType<typeof getProviderAccess>>,
+): PluginToolResult {
+  if (!attached) {
+    return {
+      provider_name: providerName,
+      status: "pending_approval",
+      message:
+        "Provider is not attached to this sandbox. Use openshell_provider_access action=request if this task needs its credential or account-backed network access.",
+    };
+  }
+  return {
+    ...providerAccessDetails(attached),
+    status: "applied",
+    message:
+      "Provider credential and provider policy are attached to this sandbox. Follow credential_usage and available_tools; do not request this provider again unless it is detached.",
+  };
+}
+
+function normalizeProviderKey(providerName: string, providerType?: string): string {
+  return (providerType || providerName).trim().toLowerCase();
+}
+
+function providerToolReport(providerName: string, providerType?: string): PluginRecord {
+  const hints = PROVIDER_TOOL_HINTS[normalizeProviderKey(providerName, providerType)] ?? [];
+  const availableTools = new Set<string>();
+  const missingTools = new Set<string>();
+  const availableBinaries: string[] = [];
+  const missingBinaries: string[] = [];
+  const preferredTools = new Set<string>();
+  const fallbackTools = new Set<string>();
+
+  for (const hint of hints) {
+    if (hint.role === "preferred") preferredTools.add(hint.tool);
+    if (hint.role === "fallback") fallbackTools.add(hint.tool);
+    const existingPath = hint.paths.find((path) => existsSync(path));
+    if (existingPath) {
+      availableTools.add(hint.tool);
+      availableBinaries.push(existingPath);
+      for (const path of hint.paths) {
+        if (path !== existingPath && !existsSync(path)) missingBinaries.push(path);
+      }
+    } else {
+      missingTools.add(hint.tool);
+      missingBinaries.push(...hint.paths);
+    }
+  }
+
+  return {
+    available_tools: [...availableTools],
+    missing_tools: [...missingTools],
+    preferred_tools: [...preferredTools],
+    fallback_tools: [...fallbackTools],
+    available_binaries: availableBinaries,
+    missing_binaries: missingBinaries,
+  };
+}
+
+function providerCredentialUsage(
+  attached: NonNullable<Awaited<ReturnType<typeof getProviderAccess>>>,
+): PluginRecord | undefined {
+  if (!attached.credential_env) return undefined;
+  const hint = PROVIDER_CREDENTIAL_HINTS[
+    normalizeProviderKey(attached.provider_name, attached.provider_type)
+  ] ?? {
+    kind: "provider_cli_or_documented_auth",
+    note: "Prefer the provider CLI if available. For direct API calls, use the provider-documented authentication format through the sandbox HTTP(S) proxy; do not assume a bearer header.",
+  };
+  const value = hint.value?.replace("$ENV", `$${attached.credential_env}`);
+  return {
+    kind: hint.kind,
+    ...(hint.header ? { header: hint.header } : {}),
+    ...(value ? { value } : {}),
+    proxy_required: true,
+    proxy_env: ["HTTP_PROXY", "HTTPS_PROXY"],
+    note: `${hint.note} OpenShell resolves openshell:resolve:env:* placeholders at the proxy; do not print or decode them.`,
+  };
+}
+
+function providerAccessDetails(
+  attached: NonNullable<Awaited<ReturnType<typeof getProviderAccess>>>,
+): PluginRecord {
+  const credentialUsage = providerCredentialUsage(attached);
+  const toolReport = providerToolReport(attached.provider_name, attached.provider_type);
+  const availableTools = Array.isArray(toolReport.available_tools)
+    ? toolReport.available_tools.filter((tool): tool is string => typeof tool === "string")
+    : [];
+  const nextStep =
+    credentialUsage && availableTools.some((tool) => tool === "gh" || tool === "glab")
+      ? "Use the provider CLI shown in available_tools, or use credential_usage through HTTPS_PROXY for direct API calls."
+      : credentialUsage &&
+          availableTools.includes("curl") &&
+          credentialUsage.header &&
+          credentialUsage.value
+        ? `Use curl with ${credentialUsage.header}: ${credentialUsage.value} through HTTPS_PROXY.`
+        : credentialUsage
+          ? "Use credential_usage through HTTP_PROXY/HTTPS_PROXY with an available fallback tool."
+          : "Provider is attached, but no credential env was reported; inspect /v1/providers or ask the operator to reattach credentials.";
+
+  return {
+    provider_name: attached.provider_name,
+    ...(attached.provider_type ? { provider_type: attached.provider_type } : {}),
+    credential_state: attached.credential_state,
+    usable_via_proxy: attached.usable_via_proxy,
+    raw_secret_available: attached.raw_secret_available,
+    credential_available: attached.credential_available,
+    ...(attached.credential_env ? { credential_env: attached.credential_env } : {}),
+    ...(credentialUsage ? { credential_usage: credentialUsage } : {}),
+    ...toolReport,
+    next_step: nextStep,
   };
 }
 
@@ -460,6 +726,38 @@ function createAccessRequestBody(params: ToolParams): CreateAccessRequestBody {
       duration: readDuration(params),
       reason,
     },
+  };
+}
+
+function createProviderAccessRequestBody(params: ToolParams): CreateProviderAccessRequestBody {
+  const userIntent = readStringProperty(params, "user_intent") ?? "";
+  const providerName = readStringProperty(params, "provider_name") ?? "";
+  const providerType = readStringProperty(params, "provider_type");
+  const reason = readStringProperty(params, "reason") ?? "";
+  const taskId = readStringProperty(params, "task_id");
+
+  return {
+    version: "nemoclaw.provider_access.v1",
+    ...(taskId ? { task_id: taskId } : {}),
+    user_intent: userIntent,
+    provider_name: providerName.trim(),
+    ...(providerType ? { provider_type: providerType.trim() } : {}),
+    reason,
+  };
+}
+
+function readToolAction(params: ToolParams): string {
+  return (readStringProperty(params, "action") ?? "").trim().toLowerCase();
+}
+
+function missingStringFields(params: ToolParams, fields: string[]): string[] {
+  return fields.filter((field) => !readStringProperty(params, field)?.trim());
+}
+
+function validationFailure(message: string): PluginToolResult {
+  return {
+    status: "failed",
+    message,
   };
 }
 
@@ -515,34 +813,37 @@ export default function register(api: OpenClawPluginApi): void {
   );
 
   api.registerTool({
-    name: "request_resource_access",
+    name: "openshell_provider_access",
     description:
-      "Request least-privilege external resource access through OpenShell. The resource field must be a preset id, not a hostname. Call list_resource_access_presets first if you are unsure which preset to request. Prefer read access unless mutation is required.",
-    parameters: accessToolParameters(["user_intent", "resource", "reason"], {
-      user_intent: {
+      "List, check, or request OpenShell provider access for this sandbox. Provider access is the preferred path for authenticated/account-backed work because a provider may attach both credentials and the required network/resource policy. Use action=list before requesting network-only access.",
+    parameters: accessToolParameters(["action"], {
+      action: {
         type: "string",
-        description: "The user's natural-language request.",
+        enum: ["list", "check", "request"],
+        description:
+          "list returns attached provider credentials; check reads a request_id or provider_name; request asks OpenShell to attach an existing host-managed provider.",
       },
-      resource: {
+      provider_name: {
+        type: "string",
+        description: "Provider name, for example github.",
+      },
+      provider_type: {
         type: "string",
         description:
-          "Preset id to request. Use list_resource_access_presets to discover valid preset ids. Use github for GitHub hosts such as github.com and api.github.com.",
+          "Optional expected provider type, for example github. Request approval fails if the provider exists with a different type.",
       },
-      access: {
+      request_id: {
         type: "string",
-        enum: ["read", "read_write"],
-        default: "read",
-        description: "Requested access mode. Use read unless mutation is required.",
+        description: "Request id returned by action=request.",
+      },
+      user_intent: {
+        type: "string",
+        description: "The user's natural-language request. Required for action=request.",
       },
       reason: {
         type: "string",
-        description: "Why this access is needed for the current task.",
-      },
-      duration: {
-        type: "string",
-        enum: ["session", "persistent"],
-        default: "session",
-        description: "Requested duration. Session access is the default.",
+        description:
+          "Why this provider is needed for the current task. Required for action=request.",
       },
       task_id: {
         type: "string",
@@ -552,69 +853,180 @@ export default function register(api: OpenClawPluginApi): void {
         type: "number",
         minimum: 0,
         maximum: MAX_ACCESS_WAIT_MS,
-        default: DEFAULT_ACCESS_WAIT_MS,
-        description: "How long to wait for operator approval before returning pending.",
+        default: 0,
+        description:
+          "For action=request or check by request_id, optional time to wait for terminal status.",
       },
     }),
     async execute(_id, params) {
+      const action = readToolAction(params);
       const clientOptions = accessClientOptions();
-      const response = await createAccessRequest(createAccessRequestBody(params), clientOptions);
-      const timeoutMs = clampWaitTimeout(
-        readNumberProperty(params, "wait_timeout_ms"),
-        DEFAULT_ACCESS_WAIT_MS,
-      );
-      return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
-    },
-  });
 
-  api.registerTool({
-    name: "list_resource_access_presets",
-    description:
-      "List resource-access preset ids currently accepted for OpenShell access proposals.",
-    parameters: accessToolParameters([], {}),
-    async execute() {
-      const response = await listAccessPresets(accessClientOptions());
+      if (action === "list") {
+        const response = await listProviderAccess(clientOptions);
+        return {
+          credential_usage:
+            "Provider credential environment values may be openshell:resolve:env:* placeholders. Use the per-provider credential_usage through the sandbox HTTP_PROXY/HTTPS_PROXY so OpenShell can resolve the placeholder at the proxy; do not decode, print, or treat it as a raw token.",
+          providers: response.providers.map((provider) => ({
+            ...providerAccessDetails(provider),
+            status: provider.status,
+          })),
+        };
+      }
+
+      if (action === "check") {
+        const requestId = readStringProperty(params, "request_id");
+        if (requestId) {
+          const response = await getAccessRequest(requestId, clientOptions);
+          const timeoutMs = clampWaitTimeout(readNumberProperty(params, "wait_timeout_ms"), 0);
+          return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
+        }
+        const providerName = readStringProperty(params, "provider_name")?.trim();
+        if (!providerName) {
+          return {
+            provider_name: "",
+            status: "failed",
+            message: "For action=check, provide either request_id or provider_name.",
+          };
+        }
+        return providerAccessToolResult(
+          providerName,
+          await getProviderAccess(providerName, clientOptions),
+        );
+      }
+
+      if (action === "request") {
+        const missing = missingStringFields(params, ["provider_name", "user_intent", "reason"]);
+        if (missing.length > 0) {
+          return validationFailure(
+            `For action=request, provide required field(s): ${missing.join(", ")}.`,
+          );
+        }
+        const providerName = readStringProperty(params, "provider_name")?.trim();
+        if (providerName) {
+          const attached = await getProviderAccess(providerName, clientOptions);
+          if (attached) {
+            return providerAccessToolResult(providerName, attached);
+          }
+        }
+        const response = await createProviderAccessRequest(
+          createProviderAccessRequestBody(params),
+          clientOptions,
+        );
+        const timeoutMs = clampWaitTimeout(
+          readNumberProperty(params, "wait_timeout_ms"),
+          DEFAULT_ACCESS_WAIT_MS,
+        );
+        return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
+      }
+
       return {
-        presets: response.presets.map((preset) => ({
-          name: preset.name,
-          description: preset.description,
-          ...(preset.provider_profile ? { provider_profile: preset.provider_profile } : {}),
-        })),
+        status: "failed",
+        message: "Unknown action. Use one of: list, check, request.",
       };
     },
   });
 
   api.registerTool({
-    name: "check_resource_access",
+    name: "openshell_network_access",
     description:
-      "Check or continue waiting for an OpenShell access proposal. This reports status only and cannot approve or modify access.",
-    parameters: accessToolParameters(["request_id"], {
+      "List, check, or request OpenShell network-only access for this sandbox. Use this for unauthenticated network/resource reachability. If the task may need authentication, API tokens, OAuth, or account identity, call openshell_provider_access action=list first and prefer provider access.",
+    parameters: accessToolParameters(["action"], {
+      action: {
+        type: "string",
+        enum: ["list_presets", "check", "request"],
+        description:
+          "list_presets returns requestable network/resource presets; check reads a request_id; request asks OpenShell for network-only access.",
+      },
+      resource: {
+        type: "string",
+        description:
+          "Preset id to request. Use action=list_presets to discover valid ids. Use github for GitHub hosts such as github.com and api.github.com.",
+      },
+      access: {
+        type: "string",
+        enum: ["read", "read_write"],
+        default: "read",
+        description: "Requested access mode. Use read unless mutation is required.",
+      },
+      duration: {
+        type: "string",
+        enum: ["session", "persistent"],
+        default: "session",
+        description: "Requested duration. Session access is the default.",
+      },
       request_id: {
         type: "string",
-        description: "The request_id returned by request_resource_access.",
+        description: "Request id returned by action=request.",
+      },
+      user_intent: {
+        type: "string",
+        description: "The user's natural-language request. Required for action=request.",
+      },
+      reason: {
+        type: "string",
+        description: "Why this network access is needed. Required for action=request.",
+      },
+      task_id: {
+        type: "string",
+        description: "Optional opaque task identifier for correlation.",
       },
       wait_timeout_ms: {
         type: "number",
         minimum: 0,
         maximum: MAX_ACCESS_WAIT_MS,
         default: 0,
-        description: "Optional time to wait for a terminal status before returning pending.",
+        description: "For action=request or check, optional time to wait for terminal status.",
       },
     }),
     async execute(_id, params) {
-      const requestId = readStringProperty(params, "request_id");
-      if (!requestId) {
+      const action = readToolAction(params);
+      const clientOptions = accessClientOptions();
+
+      if (action === "list_presets") {
+        const response = await listAccessPresets(clientOptions);
         return {
-          request_id: "",
-          status: "failed",
-          message: "Missing request_id.",
+          presets: response.presets.map((preset) => ({
+            name: preset.name,
+            description: preset.description,
+            ...(preset.provider_profile ? { provider_profile: preset.provider_profile } : {}),
+          })),
         };
       }
 
-      const clientOptions = accessClientOptions();
-      const response = await getAccessRequest(requestId, clientOptions);
-      const timeoutMs = clampWaitTimeout(readNumberProperty(params, "wait_timeout_ms"), 0);
-      return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
+      if (action === "check") {
+        const requestId = readStringProperty(params, "request_id");
+        if (!requestId) {
+          return {
+            request_id: "",
+            status: "failed",
+            message: "For action=check, provide request_id.",
+          };
+        }
+        const response = await getAccessRequest(requestId, clientOptions);
+        const timeoutMs = clampWaitTimeout(readNumberProperty(params, "wait_timeout_ms"), 0);
+        return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
+      }
+
+      if (action === "request") {
+        const missing = missingStringFields(params, ["resource", "user_intent", "reason"]);
+        if (missing.length > 0) {
+          return validationFailure(
+            `For action=request, provide required field(s): ${missing.join(", ")}.`,
+          );
+        }
+        const response = await createAccessRequest(createAccessRequestBody(params), clientOptions);
+        const timeoutMs = clampWaitTimeout(
+          readNumberProperty(params, "wait_timeout_ms"),
+          DEFAULT_ACCESS_WAIT_MS,
+        );
+        return toToolResult(await waitForAccessStatus(response, timeoutMs, clientOptions));
+      }
+
+      return {
+        status: "failed",
+        message: "Unknown action. Use one of: list_presets, check, request.",
+      };
     },
   });
 

@@ -72,6 +72,17 @@ function getRebuildCredentialEnvFromRegistry(provider: string | null | undefined
   return remoteConfig?.credentialEnv || null;
 }
 
+function gatewayProviderExists(provider: string | null | undefined): boolean {
+  const name = String(provider || "").trim();
+  if (!name) return false;
+  const result = runOpenshell(["provider", "get", name], {
+    ignoreError: true,
+    stdio: "ignore",
+    timeout: 10_000,
+  });
+  return result.status === 0;
+}
+
 function normalizeHermesRebuildAuthMethod(value: unknown): "oauth" | "api_key" | null {
   const normalized = String(value || "")
     .trim()
@@ -319,18 +330,28 @@ export async function rebuildSandbox(
       `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
     );
     if (!credentialValue) {
-      console.error("");
-      console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
-      console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
-      console.error("  but it is not set in the environment.");
-      console.error("");
-      console.error("  To fix, do one of:");
-      console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
-      console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
-      console.error("");
-      console.error("  Sandbox is untouched — no data was lost.");
-      bail(`Missing credential: ${rebuildCredentialEnv}`);
-      return;
+      if (gatewayProviderExists(rebuildProvider)) {
+        log(
+          `Preflight credential check: ${rebuildCredentialEnv} missing locally, but OpenShell provider '${rebuildProvider || ""}' is registered`,
+        );
+        console.log(
+          `  ${D}Note: ${rebuildCredentialEnv} is not exported locally, but OpenShell provider '${rebuildProvider || ""}' is registered. Rebuild will reuse the gateway credential.${R}`,
+        );
+        rebuildCredentialEnv = null;
+      } else {
+        console.error("");
+        console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
+        console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
+        console.error("  but it is not set in the environment.");
+        console.error("");
+        console.error("  To fix, do one of:");
+        console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
+        console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
+        console.error("");
+        console.error("  Sandbox is untouched — no data was lost.");
+        bail(`Missing credential: ${rebuildCredentialEnv}`);
+        return;
+      }
     }
   } else {
     // No credentialEnv in session — local inference (Ollama/vLLM) or

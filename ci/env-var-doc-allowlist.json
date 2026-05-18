@@ -12,6 +12,10 @@
     "reason": "Internal developer/test override for the managed Model Router virtualenv path. Production users should use the default ~/.nemoclaw/model-router-venv."
   },
   {
+    "name": "NEMOCLAW_OPENSHELL_PROVIDER_PROFILES_JSON",
+    "reason": "Internal plugin/test override used to inject OpenShell provider profile JSON when policy.local profile discovery is unavailable. Not user-facing; production sandboxes read provider profiles from OpenShell."
+  },
+  {
     "name": "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },
