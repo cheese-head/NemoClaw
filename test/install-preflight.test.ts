@@ -2823,11 +2823,13 @@ if [ "\${1:-}" = "-n" ]; then shift; fi
 printf '%s\\n' "$*" >> "$SUDO_LOG"
 exec "$@"
 `,
+    env = {},
   }: {
     dockerScript: string;
     idScript: string;
     systemctlScript?: string;
     sudoScript?: string;
+    env?: Record<string, string>;
   }) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-bootstrap-"));
     const fakeBin = path.join(tmp, "bin");
@@ -2869,6 +2871,7 @@ ensure_docker
           SUDO_LOG: sudoLog,
           ID_LOG: idLog,
           DOCKER_COUNT: dockerCount,
+          ...env,
         },
       },
     );
@@ -2929,6 +2932,31 @@ esac
     expect(output).not.toMatch(/newgrp docker/);
   });
 
+  it("defers daemon reachability errors to preflight in non-interactive mode", () => {
+    const { result } = runEnsureDockerWithStubs({
+      dockerScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "info" ]; then exit 1; fi
+exit 0
+`,
+      idScript: `#!/usr/bin/env bash
+case "$*" in
+  "-u") printf '1000\\n' ;;
+  "-un") printf 'alice\\n' ;;
+  "-nG alice") printf 'alice docker\\n' ;;
+  "-nG") printf 'alice docker adm\\n' ;;
+  *) printf 'unexpected id %s\\n' "$*" >&2; exit 99 ;;
+esac
+`,
+      env: { NON_INTERACTIVE: "1" },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Docker is installed but not reachable/);
+    expect(output).toMatch(/onboarding preflight will report remediation/);
+    expect(output).not.toMatch(/sudo systemctl start docker/);
+  });
+
   it("skips docker group membership checks for root", () => {
     const { result, idLog } = runEnsureDockerWithStubs({
       dockerScript: `#!/usr/bin/env bash
@@ -2955,6 +2983,32 @@ esac
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
+    expect(idLog).toMatch(/^-u$/m);
+    expect(idLog).not.toMatch(/-nG/);
+  });
+
+  it("defers root daemon reachability errors to preflight in non-interactive mode", () => {
+    const { result, idLog } = runEnsureDockerWithStubs({
+      dockerScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "info" ]; then exit 1; fi
+exit 0
+`,
+      idScript: `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$ID_LOG"
+case "$*" in
+  "-u") printf '0\\n' ;;
+  "-un") printf 'root\\n' ;;
+  "-nG"*) printf 'root should not check groups\\n' >&2; exit 99 ;;
+  *) printf 'unexpected id %s\\n' "$*" >&2; exit 99 ;;
+esac
+`,
+      env: { NON_INTERACTIVE: "1" },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Docker is installed but not reachable/);
+    expect(output).toMatch(/onboarding preflight will report remediation/);
     expect(idLog).toMatch(/^-u$/m);
     expect(idLog).not.toMatch(/-nG/);
   });
