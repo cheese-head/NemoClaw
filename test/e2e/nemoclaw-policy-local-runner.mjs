@@ -51,9 +51,12 @@ function tool(name) {
 
 let result;
 if (command === "list") {
-  result = await tool("list_resource_access_presets").execute("call_list", {});
+  result = await tool("openshell_network_access").execute("call_list", {
+    action: "list_presets",
+  });
 } else if (command === "request") {
-  result = await tool("request_resource_access").execute("call_request", {
+  result = await tool("openshell_network_access").execute("call_request", {
+    action: "request",
     user_intent: "Verify NemoClaw plugin access request integration",
     resource: "github",
     access: "read",
@@ -63,7 +66,8 @@ if (command === "list") {
   });
 } else if (command === "check") {
   if (!requestId) usage();
-  result = await tool("check_resource_access").execute("call_check", {
+  result = await tool("openshell_network_access").execute("call_check", {
+    action: "check",
     request_id: requestId,
     wait_timeout_ms: 30_000,
   });

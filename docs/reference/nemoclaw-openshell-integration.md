@@ -1,80 +1,220 @@
-# NemoClaw OpenShell Integration
+# NemoClaw Provider and Resource Access Flow
 
-```mermaid
-flowchart LR
-  user["User"] --> agent["Agent runtime"]
-  agent --> adapter["NemoClaw agent adapter"]
+NemoClaw gives OpenClaw agents a provider-first way to get account-backed access
+to external services. The important distinction is:
 
-  subgraph adapters["Current adapters"]
-    openclaw["OpenClaw plugin"]
-    hermes["Hermes plugin"]
-  end
+- **Provider access** attaches a host-managed credential and the matching
+  provider policy to the sandbox.
+- **Network access** only opens a resource path; it does not attach credentials.
 
-  subgraph plugin_tools["NemoClaw access tools"]
-    openclaw_tools["OpenClaw: list/request/check tools"]
-    hermes_tool["Hermes: openshell_network_access"]
-  end
+Agents should prefer provider access whenever a task needs an account, token,
+OAuth identity, API key, write operation, or service-specific CLI.
 
-  adapter --> adapters
-  adapters --> plugin_tools
-  onboard["nemoclaw onboard"] --> profile_import["Import NemoClaw provider profiles"]
-  profile_import --> profiles["OpenShell provider profiles"]
-  openclaw_tools --> profiles
-  hermes_tool --> profiles
-  profiles --> presets["Provider-backed access presets"]
-  presets --> openclaw_tools
-  presets --> hermes_tool
+```text
+                         Operator approval
+                                  |
+                                  v
+        +-------------------------+-------------------------+
+        |                     OpenShell                     |
+        |                                                   |
+        |  +-------------+   +-------------+   +----------+ |
+        |  | Provider    |   | Policy      |   | L7 proxy | |
+        |  | store       +-->| engine      +-->|          | |
+        |  | credentials |   | rules       |   | egress   | |
+        |  | config      |   | reloads     |   | rewrite  | |
+        |  +-------------+   +-------------+   +----+-----+ |
+        +---------------------------------------------|-----+
+                                                      |
+                                                      v
+                                           External services
+                                  GitHub, GitLab, APIs, registries
 
-  openclaw_tools --> policy_local["policy.local HTTP API"]
-  hermes_tool --> policy_local
-
-  subgraph sandbox["OpenShell sandbox"]
-    policy_local
-    proxy["Sandbox HTTP proxy"]
-    policy_runtime["Sandbox policy runtime"]
-  end
-
-  policy_local --> proposals["OpenShell policy proposals"]
-  proposals --> review["Operator review"]
-  review --> approve["Approve or reject"]
-  approve --> merge["Policy merge and reload"]
-  merge --> policy_runtime
-  policy_runtime --> openclaw_tools
-  policy_runtime --> hermes_tool
-
-  agent --> workload["Requested agent work"]
-  workload --> proxy
-  proxy --> policy_runtime
-  policy_runtime --> external["Approved external resources"]
+        +---------------------------------------------------+
+        |                 OpenShell sandbox                 |
+        |                                                   |
+        |  +----------------+      +----------------------+ |
+        |  | OpenClaw agent |<---->| NemoClaw plugin      | |
+        |  |                |      |                      | |
+        |  | plans task     |      | provider access     | |
+        |  | chooses tool   |      | network access      | |
+        |  | runs CLI/curl  |      +----------------------+ |
+        |  +-------+--------+                               |
+        |          |                                        |
+        |          v                                        |
+        |  +---------------------------------------------+  |
+        |  | Installed tools                             |  |
+        |  | gh, glab, claude, codex, opencode, copilot |  |
+        |  | curl, git, node, python                     |  |
+        |  +-------+-------------------------------------+  |
+        |          |                                        |
+        |          | HTTP_PROXY / HTTPS_PROXY               |
+        |          v                                        |
+        |  +---------------------------------------------+  |
+        |  | Credential placeholders                     |  |
+        |  | GITHUB_TOKEN=openshell:resolve:env:...      |  |
+        |  | Proxy resolves placeholders at egress.      |  |
+        |  +---------------------------------------------+  |
+        +---------------------------------------------------+
 ```
 
-## Flow
+## Access Types
 
-1. The agent asks NemoClaw for allowed resource presets.
-2. During onboarding, NemoClaw imports its provider profiles into OpenShell for package registries, messaging platforms, Brave Search, Jira, Hugging Face, and local inference.
-3. NemoClaw builds the agent-visible preset list from OpenShell provider profiles, with built-in presets as fallback coverage for older OpenShell versions.
-4. The agent requests access with a preset, access mode, reason, and optional wait timeout.
-5. NemoClaw submits a least-privilege proposal to `policy.local`.
-6. OpenShell surfaces the proposal for operator review.
-7. After approval, OpenShell merges and reloads the sandbox policy.
-8. The agent checks the request; NemoClaw reports `applied` only after OpenShell reports the policy reload is complete.
+### Provider Access
 
-## Agent Tools
+Gives the agent a credential placeholder, matching provider policy, and provider
+endpoints. Use it for authenticated API calls, account-backed CLIs, writes,
+OAuth flows, and API-key flows.
 
-OpenClaw exposes one tool per operation:
+### Network Access
 
-- `list_resource_access_presets`: discovers provider-backed preset ids.
-- `request_resource_access`: submits a network access proposal through OpenShell.
-- `check_resource_access`: polls an existing proposal until it is pending, denied, failed, or applied.
+Gives the agent network reachability only. Use it for public or unauthenticated
+resource access.
 
-Hermes exposes a single operation-dispatched tool:
+## Provider Workflow
 
-- `openshell_network_access`: accepts `action` values `list_presets`, `request`, and `check`.
+1. Agent checks what is already attached.
 
-## Adapter Contract
+   Tool: `openshell_provider_access`
 
-Each agent adapter exposes the same response shape through the harness-native mechanism. OpenClaw uses its plugin API. Hermes uses its Python plugin API. Additional harnesses can implement the same proposal flow without changing the OpenShell policy API.
+   ```json
+   {"action": "list"}
+   ```
 
-## Provider Profiles
+2. If the needed provider is missing, the agent requests it.
 
-NemoClaw imports OpenShell provider profiles for its policy presets during onboarding. Existing OpenShell profiles are left untouched, and already-imported NemoClaw profiles are skipped so repeated onboarding remains idempotent. If the OpenShell gateway does not support provider-profile import, NemoClaw continues with local fallback presets.
+   Tool: `openshell_provider_access`
+
+   ```json
+   {
+     "action": "request",
+     "provider_name": "<provider>",
+     "provider_type": "<provider_type>",
+     "user_intent": "Describe the account-backed task",
+     "reason": "Need account-backed access for the task"
+   }
+   ```
+
+3. Operator approves the provider request.
+
+4. OpenShell attaches the provider to this sandbox.
+
+   ```text
+   credential placeholder appears
+   provider policy is composed into sandbox policy
+   provider endpoints become reachable through the proxy
+   provider tools become useful for that provider
+   ```
+
+5. Agent checks state.
+
+   Tool: `openshell_provider_access`
+
+   ```json
+   {
+     "action": "check",
+     "provider_name": "<provider>"
+   }
+   ```
+
+6. Agent uses an available tool through the proxy.
+
+   ```text
+   provider CLI when available
+   curl/node/python fallback when appropriate
+   ```
+
+## Network-Only Workflow
+
+Use network-only access when the task only needs unauthenticated reachability.
+
+1. Agent lists available network presets.
+
+   Tool: `openshell_network_access`
+
+   ```json
+   {"action": "list_presets"}
+   ```
+
+2. Agent requests a preset.
+
+   Tool: `openshell_network_access`
+
+   ```json
+   {
+     "action": "request",
+     "resource": "<preset>",
+     "access": "read",
+     "user_intent": "Fetch public unauthenticated content",
+     "reason": "Need this resource for the task"
+   }
+   ```
+
+3. Operator approves the network request.
+
+4. OpenShell reloads policy.
+
+5. Agent checks the request.
+
+   Tool: `openshell_network_access`
+
+   ```json
+   {
+     "action": "check",
+     "request_id": "<request_id>"
+   }
+   ```
+
+Network-only access does not create token environment variables and does not
+grant account identity.
+
+## Credential Placeholder Behavior
+
+Provider credentials can appear inside the sandbox as placeholder values:
+
+```text
+GITHUB_TOKEN=openshell:resolve:env:...
+```
+
+Those placeholders are intentional. They are not raw tokens. They only become
+usable when the request goes through the sandbox HTTP(S) proxy:
+
+```text
+HTTP_PROXY=http://10.200.0.1:3128
+HTTPS_PROXY=http://10.200.0.1:3128
+```
+
+For direct API calls, the agent should follow the `credential_usage` returned by
+`openshell_provider_access`. Some providers use bearer headers, while others use
+service-specific headers, URL token formats, SDK conventions, or CLIs. For
+GitHub API calls, for example:
+
+```bash
+curl -x "$HTTPS_PROXY" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://api.github.com/user
+```
+
+The proxy resolves `openshell:resolve:env:*` at egress, enforces the approved
+policy, and forwards the request to the external service.
+
+## Why the CLIs Are in the Image
+
+NemoClaw ships provider-related binaries in the sandbox image so an approved
+provider is immediately usable. The presence of a binary is not the permission
+boundary. OpenShell policy and provider attachment are the permission boundary.
+
+Before approval:
+
+```text
+binary exists, but provider endpoint/credential use is blocked by policy
+```
+
+After approval:
+
+```text
+binary exists, matching provider policy is active, credential placeholder is
+available, and proxy-mediated requests can succeed
+```
+
+This keeps the agent experience smooth without weakening the sandbox access
+model.

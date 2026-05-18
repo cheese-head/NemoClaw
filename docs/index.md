@@ -327,6 +327,7 @@ Backup and Restore <manage-sandboxes/backup-restore>
 :hidden:
 
 Approve or Deny Network Requests <network-policy/approve-network-requests>
+Provider Access Requests <network-policy/provider-access-requests>
 Customize the Network Policy <network-policy/customize-network-policy>
 Integration Policy Examples <network-policy/integration-policy-examples>
 ```

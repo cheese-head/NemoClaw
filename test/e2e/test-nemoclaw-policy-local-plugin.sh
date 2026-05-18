@@ -43,7 +43,7 @@ cp "${NEMOCLAW_ROOT}/test/e2e/nemoclaw-policy-local-runner.mjs" "${UPLOAD_DIR}/r
   --no-tty \
   -- bash -lc "if [ -d /sandbox/upload ]; then cp -R /sandbox/upload/. /sandbox/; fi && node --version && test -f /sandbox/nemoclaw/dist/index.js && test -d /sandbox/nemoclaw/node_modules && test -f /sandbox/runner.mjs && echo plugin sandbox ready"
 
-"${OPENSHELL_BIN}" sandbox ssh-config "${SANDBOX}" > "${TMP_DIR}/ssh_config"
+"${OPENSHELL_BIN}" sandbox ssh-config "${SANDBOX}" >"${TMP_DIR}/ssh_config"
 SSH_HOST="$(awk '/^Host / { print $2; exit }' "${TMP_DIR}/ssh_config")"
 if [ -z "${SSH_HOST}" ]; then
   echo "failed to parse sandbox ssh host" >&2
@@ -62,17 +62,17 @@ LIST_JSON="$(ssh -F "${TMP_DIR}/ssh_config" "${SSH_HOST}" node /sandbox/runner.m
 printf "LIST_JSON=%s\n" "${LIST_JSON}"
 printf "%s" "${LIST_JSON}" \
   | jq -e '.presets[] | select(.name == "github" and .provider_profile == "github")' \
-  >/dev/null
+    >/dev/null
 
 REQUEST_JSON="$(ssh -F "${TMP_DIR}/ssh_config" "${SSH_HOST}" node /sandbox/runner.mjs request)"
 printf "REQUEST_JSON=%s\n" "${REQUEST_JSON}"
 REQ_ID="$(printf "%s" "${REQUEST_JSON}" | jq -r '.request_id')"
 if [ -z "${REQ_ID}" ] || [ "${REQ_ID}" = "null" ]; then
-  echo "request_resource_access did not return a request_id" >&2
+  echo "openshell_network_access action=request did not return a request_id" >&2
   exit 1
 fi
 if [ "$(printf "%s" "${REQUEST_JSON}" | jq -r '.status')" != "pending_approval" ]; then
-  echo "request_resource_access did not return pending_approval" >&2
+  echo "openshell_network_access action=request did not return pending_approval" >&2
   exit 1
 fi
 
@@ -81,7 +81,7 @@ fi
 CHECK_JSON="$(ssh -F "${TMP_DIR}/ssh_config" "${SSH_HOST}" node /sandbox/runner.mjs check "${REQ_ID}")"
 printf "CHECK_JSON=%s\n" "${CHECK_JSON}"
 if [ "$(printf "%s" "${CHECK_JSON}" | jq -r '.status')" != "applied" ]; then
-  echo "check_resource_access did not return applied" >&2
+  echo "openshell_network_access action=check did not return applied" >&2
   exit 1
 fi
 

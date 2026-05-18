@@ -429,6 +429,37 @@ describe("registerRuntimeContext", () => {
       };
       expect(result.prependContext).toContain("Do not claim unrestricted host or internet access.");
     });
+
+    it("instructs agents to prefer provider access before resource access", async () => {
+      const { api } = makeMockApi();
+      registerRuntimeContext(api, defaultConfig);
+      const result = (await api._trigger(
+        "before_prompt_build",
+        {},
+        { sessionKey: nextSessionKey() },
+      )) as {
+        prependContext: string;
+      };
+      expect(result.prependContext).toContain("Access workflow:");
+      expect(result.prependContext).toContain("call openshell_provider_access");
+      expect(result.prependContext).toContain("Prefer an attached provider credential");
+      expect(result.prependContext).toContain("openshell:resolve:env:* placeholders");
+      expect(result.prependContext).toContain("HTTP_PROXY/HTTPS_PROXY");
+      expect(result.prependContext).toContain("Do not decode, print, or treat it as a raw token");
+      expect(result.prependContext).toContain("use an available fallback tool");
+      expect(result.prependContext).toContain("required auth header");
+      expect(result.prependContext).toContain("action=request");
+      expect(result.prependContext).toContain("Access examples:");
+      expect(result.prependContext).toContain('openshell_provider_access {"action":"list"}');
+      expect(result.prependContext).toContain(
+        '"provider_name":"<provider_name>","provider_type":"<provider_type>"',
+      );
+      expect(result.prependContext).toContain(
+        'openshell_provider_access {"action":"check","request_id":"<request_id>"',
+      );
+      expect(result.prependContext).toContain("openshell_network_access");
+      expect(result.prependContext).not.toContain('"provider_name":"github"');
+    });
   });
 
   describe("caching — same session, unchanged fingerprint", () => {
@@ -536,6 +567,9 @@ describe("registerRuntimeContext", () => {
 
       expect(result.prependContext).toContain("<nemoclaw-runtime>");
       expect(result.prependContext).toContain("deny-by-default");
+      expect(result.prependContext).toContain("call openshell_provider_access");
+      expect(result.prependContext).toContain("Access examples:");
+      expect(result.prependContext).toContain('openshell_provider_access {"action":"list"}');
       expect(
         warnMessages.some((m) => m.includes("nemoclaw runtime context injection failed")),
       ).toBe(true);
