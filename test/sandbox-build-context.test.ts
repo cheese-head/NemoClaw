@@ -70,6 +70,7 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(blueprintManifestDir, 0o700);
     writeFixture(path.join("scripts", "nemoclaw-start.sh"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
+    writeFixture(path.join("scripts", "install-provider-tools.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.py"));
     writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
@@ -86,7 +87,9 @@ describe("sandbox build context staging", () => {
       "index.js",
     );
 
-    expect((fs.statSync(stagedManifestDir).mode & 0o777).toString(8)).toBe("755");
+    const stagedManifestDirMode = fs.statSync(stagedManifestDir).mode & 0o777;
+    expect(stagedManifestDirMode & 0o555).toBe(0o555);
+    expect(stagedManifestDirMode & 0o002).toBe(0);
     expect((fs.statSync(stagedManifest).mode & 0o777).toString(8)).toBe("644");
     expect((fs.statSync(stagedPlugin).mode & 0o777).toString(8)).toBe("644");
   }
@@ -191,6 +194,9 @@ describe("sandbox build context staging", () => {
       ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "codex-acp-wrapper.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "install-provider-tools.sh"))).toBe(
+        true,
+      );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.py"))).toBe(
         true,
       );

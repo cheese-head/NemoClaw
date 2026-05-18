@@ -65,10 +65,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
         "dos2unix=7.5.2-1*" \
+        gh=2.46.0-3 \
+        glab=1.53.0-1+b3 \
         jq=1.7.1-6+deb13u2 \
         vim-tiny=2:9.1.1230-2 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
     && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/install-provider-tools.sh /usr/local/lib/nemoclaw/install-provider-tools.sh
+RUN chmod 755 /usr/local/lib/nemoclaw/install-provider-tools.sh \
+    && /usr/local/lib/nemoclaw/install-provider-tools.sh
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of

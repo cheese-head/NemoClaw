@@ -632,8 +632,11 @@ def build_config(env: dict | None = None) -> dict:
         if provider_key not in _provider_keys:
             plugin_entries[_plugin_id] = {"enabled": False}
 
+    plugin_entries["nemoclaw"] = {"enabled": True}
     plugins = {"entries": plugin_entries}
-    plugin_load_paths: list[str] = []
+    plugin_load_paths: list[str] = [
+        "/usr/local/share/nemoclaw/openclaw-plugins/nemoclaw"
+    ]
     for plugin in openclaw_plugins:
         plugin_entries[plugin["id"]] = {"enabled": True}
         if plugin["loadPath"] not in plugin_load_paths:

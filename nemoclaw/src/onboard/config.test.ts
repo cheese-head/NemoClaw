@@ -143,6 +143,18 @@ describe("onboard/config", () => {
       expect(loadOnboardConfig()).toBeNull();
     });
 
+    it("returns null when the config file is empty", () => {
+      const configPath = `${homedir()}/.nemoclaw/config.json`;
+      store.set(configPath, "");
+      expect(loadOnboardConfig()).toBeNull();
+    });
+
+    it("returns null when the config file is malformed", () => {
+      const configPath = `${homedir()}/.nemoclaw/config.json`;
+      store.set(configPath, "{");
+      expect(loadOnboardConfig()).toBeNull();
+    });
+
     it("returns parsed config when file exists", () => {
       const config = makeConfig();
       const configPath = `${homedir()}/.nemoclaw/config.json`;
